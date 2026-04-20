@@ -146,55 +146,55 @@ namespace XOSC
         private static byte[]? _pendingData;
         private const string StableApiUrl = "https://api.github.com/repos/hollyntt/XOSC/releases/latest"; // hi no im not a token logger, im on github so chill out yo
 
-        public static async Task CheckForUpdates()
-        {
-            Status = "checking GitHub..."; NewVersionFound = false;
-            try {
-                using var http = new HttpClient();
-                http.DefaultRequestHeaders.Add("User-Agent", "XOSC-Updater");
-                
-                var resp = await http.GetStringAsync(StableApiUrl);
-                using var doc = JsonDocument.Parse(resp);
-                string latestTag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+            public static async Task CheckForUpdates()
+            {
+                Status = "checking GitHub..."; NewVersionFound = false;
+                try {
+                    using var http = new HttpClient();
+                    http.DefaultRequestHeaders.Add("User-Agent", "XOSC-Updater");
 
-                if (latestTag == Program.AppVersion) {
-                    Status = "already up to date";
-                    return;
-                }
+                    var resp = await http.GetStringAsync(StableApiUrl);
+                    using var doc = JsonDocument.Parse(resp);
+                    string latestTag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
 
-                var asset = doc.RootElement.GetProperty("assets").EnumerateArray()
+                    if (latestTag == Program.AppVersion) {
+                        Status = "already up to date";
+                        return;
+                    }
+
+                    var asset = doc.RootElement.GetProperty("assets").EnumerateArray()
                     .FirstOrDefault(a => a.GetProperty("name").GetString() == "XOSC.zip");
 
-                string downloadUrl = asset.GetProperty("browser_download_url").GetString() ?? "";
-                if (string.IsNullOrEmpty(downloadUrl)) { Status = "XOSC.zip not found in release"; return; }
+                    string downloadUrl = asset.GetProperty("browser_download_url").GetString() ?? "";
+                    if (string.IsNullOrEmpty(downloadUrl)) { Status = "XOSC.zip not found in release"; return; }
 
-                Status = "downloading...";
-                var zipData = await http.GetByteArrayAsync(downloadUrl);
-                using var ms = new MemoryStream(zipData);
-                using var archive = new ZipArchive(ms);
-                var entry = archive.GetEntry("linux-x64/XOSC") ?? archive.GetEntry("XOSC");
-                
-                if (entry != null) {
-                    using var es = entry.Open(); using var msw = new MemoryStream();
-                    await es.CopyToAsync(msw); _pendingData = msw.ToArray(); // why the line yellow yo, is that a piss stream??
-                    Status = $"Update Found: {latestTag}"; NewVersionFound = true;
-                }
-            } catch (Exception e) { Status = $"error: {e.Message}"; }
-        }
+                    Status = "downloading...";
+                    var zipData = await http.GetByteArrayAsync(downloadUrl);
+                    using var ms = new MemoryStream(zipData);
+                    using var archive = new ZipArchive(ms);
+                    var entry = archive.GetEntry("linux-x64/XOSC") ?? archive.GetEntry("XOSC");
 
-        public static void ApplyUpdate()
-        {
-            if (_pendingData == null) return;
-            try {
-                string self = Environment.ProcessPath!;
-                File.Move(self, self + ".bak", true);
-                File.WriteAllBytes(self, _pendingData);
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) Process.Start("chmod", $"+x \"{self}\"").WaitForExit();
-                Thread.Sleep(500); // yo, ig this is the method
-                Process.Start(new ProcessStartInfo(self) { UseShellExecute = true });
-                Environment.Exit(0);
-            } catch { }
-        }
+                    if (entry != null) {
+                        using var es = entry.Open(); using var msw = new MemoryStream();
+                        await es.CopyToAsync(msw); _pendingData = msw.ToArray(); // why the line yellow yo, is that a piss stream??
+                        Status = $"Update Found: {latestTag}"; NewVersionFound = true;
+                    }
+                } catch (Exception e) { Status = $"error: {e.Message}"; }
+            }
+
+            public static void ApplyUpdate()
+            {
+                if (_pendingData == null) return;
+                try {
+                    string self = Environment.ProcessPath!;
+                    File.Move(self, self + ".bak", true);
+                    File.WriteAllBytes(self, _pendingData);
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) Process.Start("chmod", $"+x \"{self}\"").WaitForExit();
+                    Thread.Sleep(500); // yo, ig this is the method
+                    Process.Start(new ProcessStartInfo(self) { UseShellExecute = true });
+                    Environment.Exit(0);
+                } catch { }
+            }
     }
 
     public static class MusicChatEngine // wat
@@ -212,7 +212,7 @@ namespace XOSC
         public static void Init() { _client = new UdpClient(); _cts?.Cancel(); _cts = new CancellationTokenSource(); ScrapeHardwareNames(); Task.Run(() => Loop(_cts.Token)); }
         public static void SetManual(string m) { _manualMsg = m; _manualExpiry = DateTime.Now.AddSeconds(20); }
         private static async Task Loop(CancellationToken t) { while (!t.IsCancellationRequested) { if (Program.Config.ChatboxEnabled) try { await Update(); } catch { } await Task.Delay(1000, t); } }
-        
+
         private static async Task Update()
         {
             var cfg = Program.Config;
@@ -250,7 +250,7 @@ namespace XOSC
 
         private static void SendOsc(string addr, string text) {
             try { List<byte> p = new(); void Add(string s) { byte[] b = Encoding.UTF8.GetBytes(s); p.AddRange(b); p.Add(0); while (p.Count % 4 != 0) p.Add(0); }
-                Add(addr); Add(",sTT"); Add(text); _client.Send(p.ToArray(), p.Count, "127.0.0.1", 9000);
+            Add(addr); Add(",sTT"); Add(text); _client.Send(p.ToArray(), p.Count, "127.0.0.1", 9000);
             } catch { }
         }
 
@@ -259,7 +259,7 @@ namespace XOSC
                 StringBuilder buff = new StringBuilder(256); IntPtr handle = GetForegroundWindow();
                 if (GetWindowText(handle, buff, 256) > 0) {
                     string t = buff.ToString(); if (t.Contains("Spotify") || t.Contains("YouTube") || t.Contains("SoundCloud"))
-                        return Regex.Replace(t, @" - (Spotify|YouTube|SoundCloud).*", "").Trim();
+                    return Regex.Replace(t, @" - (Spotify|YouTube|SoundCloud).*", "").Trim();
                 }
                 return "Chilling";
             }
@@ -293,16 +293,35 @@ namespace XOSC
 
     class Program
     {
+        private static string GetConfigPath()
+        {
+            // 1. Check if XDG_CONFIG_HOME is configured. Should be for most Linux distros
+            string? xdgConfigHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+            string baseDir;
+            if (!string.IsNullOrEmpty(xdgConfigHome))
+            {
+                baseDir = xdgConfigHome;
+            }
+            else
+            {
+                // 2. If not, just assume .config. This is the place you can decide to hardcode it if you want. Probably better to use ~/xosc instead however
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                baseDir = Path.Combine(home, ".config");
+            }
+            // 3. Create the actual xosc folder and config file
+            return Path.Combine(baseDir, "xosc", "config.json");
+        }
         public const string AppVersion = "f61994b"; // oh cool this is automated by publish nice
         public static AppConfig Config = new();
-        private static string _path = "/home/soap/xosc/config.json", _chatIn = "";
+        private static string _path = GetConfigPath();
+        private static string _chatIn = "";
         private static Mutex? _mtx; private static int _navPage = 0;
         private static readonly string[] _navLabels = { "Dashboard", "Statuses", "Chatbox", "Hardware", "Network", "Updater" };
         private static readonly Vector4 ColAccent = new(0.38f, 0.73f, 1.00f, 1f), ColBg = new(0.10f, 0.10f, 0.13f, 1f), ColSidebar = new(0.07f, 0.07f, 0.09f, 1f), ColCard = new(0.14f, 0.14f, 0.18f, 1f);
 
         public static void Main() {
             _mtx = new Mutex(true, "XOSC_VRC_Unique_REL", out bool fresh); if (!fresh) Environment.Exit(0);
-            Directory.CreateDirectory("/home/soap/xosc"); LoadConfig();
+            Directory.CreateDirectory(Path.GetDirectoryName(_path)); LoadConfig();
             if (Config.SavedVersion != AppVersion) { Config.SavedVersion = AppVersion; SaveConfig(); }
             MusicChatEngine.Init(); Raylib.InitWindow(960, 640, "XOSC"); Raylib.SetWindowState(ConfigFlags.ResizableWindow); rlImGui.Setup(true); Raylib.SetTargetFPS(60); ApplyTheme();
             while (!Raylib.WindowShouldClose()) { Raylib.BeginDrawing(); Raylib.ClearBackground(new Color(26, 26, 33, 255)); rlImGui.Begin(); DrawUI(); rlImGui.End(); Raylib.EndDrawing(); }
