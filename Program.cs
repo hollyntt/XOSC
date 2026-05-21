@@ -254,31 +254,30 @@ namespace XOSC
                     VramTotal = $"{vramTotal.Value / 1024f:F1} GB";
                 }
             }
-
-                    // ✅ FIX: Use Windows API for RAM (Much more reliable than LHM sensors)
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            var memStatus = new NativeMethods.MEMORYSTATUSEX();
-            memStatus.dwLength = (uint)Marshal.SizeOf(memStatus);
-            if (NativeMethods.GlobalMemoryStatusEx(ref memStatus))
+            
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                double usedGB = (memStatus.ullTotalPhys - memStatus.ullAvailPhys) / (1024.0 * 1024.0 * 1024.0);
-                double totalGB = memStatus.ullTotalPhys / (1024.0 * 1024.0 * 1024.0);
-                RamUsed = $"{usedGB:F1} GB";
-                RamTotal = $"{totalGB:F1} GB";
+                var memStatus = new NativeMethods.MEMORYSTATUSEX();
+                memStatus.dwLength = (uint)Marshal.SizeOf(memStatus);
+                if (NativeMethods.GlobalMemoryStatusEx(ref memStatus))
+                {
+                    double usedGB = (memStatus.ullTotalPhys - memStatus.ullAvailPhys) / (1024.0 * 1024.0 * 1024.0);
+                    double totalGB = memStatus.ullTotalPhys / (1024.0 * 1024.0 * 1024.0);
+                    RamUsed = $"{usedGB:F1} GB";
+                    RamTotal = $"{totalGB:F1} GB";
+                }
             }
-        }
-        else
-        {
-            // Keep old LHM logic for Linux just in case, though this file is Windows-focused
-            if (_ram != null)
+            else
             {
-                float ramUsedMB = 0f;
-                float ramAvailMB = 0f;
-                bool hasUsed = false, hasAvail = false;
+                // Keep old LHM logic for Linux just in case, though this file is Windows-focused
+                if (_ram != null)
+                {
+                    float ramUsedMB = 0f;
+                    float ramAvailMB = 0f;
+                    bool hasUsed = false, hasAvail = false;
 
-                var allSensors = new List<ISensor>(_ram.Sensors);
-                foreach (var sub in _ram.SubHardware) allSensors.AddRange(sub.Sensors);
+                    var allSensors = new List<ISensor>(_ram.Sensors);
+                    foreach (var sub in _ram.SubHardware) allSensors.AddRange(sub.Sensors);
 
                     foreach (var s in allSensors)
                     {
@@ -303,7 +302,7 @@ namespace XOSC
                         RamUsed = $"{ramUsedMB / 1024f:F1} GB";
                         RamTotal = $"{totalMB / 1024f:F1} GB";
                     }
-                }
+                } 
             }
         }
 
@@ -319,7 +318,7 @@ namespace XOSC
             try
             {
                 var psi = new ProcessStartInfo("powershell", "-NoProfile -Command \"(Get-CimInstance Win32_PhysicalMemory).SMBIOSMemoryType\"")
-                { RedirectStandardOutput = true, CreateNoWindow = true, UseShellExecute = false };
+                    { RedirectStandardOutput = true, CreateNoWindow = true, UseShellExecute = false };
                 using var p = Process.Start(psi);
                 string output = p.StandardOutput.ReadToEnd().Trim();
                 var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
@@ -359,23 +358,6 @@ namespace XOSC
             return found ? fmt(maxVal) : fallback;
         }
 
-        private static float? GetHighestVramFloat(IHardware hw, string[] nameParts)
-        {
-            if (hw == null) return null;
-            var allSensors = new List<ISensor>(hw.Sensors);
-            foreach (var sub in hw.SubHardware) allSensors.AddRange(sub.Sensors);
-            var sensors = allSensors.Where(x => (x.SensorType == SensorType.SmallData || x.SensorType == SensorType.Data) && nameParts.Any(p => x.Name.Contains(p, StringComparison.OrdinalIgnoreCase)));
-            float maxVal = -1;
-            bool found = false;
-            foreach (var s in sensors)
-            {
-                if (s.Value.HasValue && s.Value.Value >= 0)
-                {
-                    if (!found || s.Value.Value > maxVal) { maxVal = s.Value.Value; found = true; }
-                }
-            }
-            return found ? maxVal : null;
-        }
         private static float? GetVramSensorValue(IHardware hw, string[] priorityNames)
         {
             if (hw == null) return null;
@@ -671,7 +653,9 @@ namespace XOSC
     {
         public static string AppVersion { get { var a = Assembly.GetExecutingAssembly(); var v = a.GetCustomAttribute<AssemblyInformationalVersionAttribute>(); if (v != null && !string.IsNullOrEmpty(v.InformationalVersion)) return v.InformationalVersion.Length >= 7 ? v.InformationalVersion[..7] : v.InformationalVersion; return "unknown"; } }
         public static AppConfig Config = new();
-        private static string _path = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "xosc", "config.json") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "xosc", "config.json");
+        private static string _path = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) 
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "xosc", "config.json") 
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "xosc", "config.json");
         private static string _chatIn = "";
         private static Mutex? _mtx; private static int _navPage = 0;
         private static readonly string[] _navLabels = { "Dashboard", "Statuses", "Chatbox", "Hardware", "Network", "Appearance", "Misc", "Updater" };
@@ -707,8 +691,69 @@ namespace XOSC
         static void DrawCombo(string l, string[] items, ref string sel, ref string cV) { int i = Array.IndexOf(items, sel); if (i == -1) { if (!string.IsNullOrEmpty(sel) && sel != "Custom...") cV = sel; i = items.Length - 1; sel = "Custom..."; } if (ImGui.Combo(l, ref i, items, items.Length)) { sel = items[i]; SaveConfig(); } if (sel == "Custom..." && ImGui.InputText("Custom " + l, ref cV, 64)) SaveConfig(); }
         static void Card(string t, Action d) { ImGui.SetCursorPosX(24); ImGui.TextColored(ColAccent, t); ImGui.Dummy(new Vector2(0, 8)); ImGui.SetCursorPosX(24); ImGui.PushStyleColor(ImGuiCol.ChildBg, ColCard); ImGui.PushStyleColor(ImGuiCol.Text, DeriveText(ColCard)); ImGui.PushStyleColor(ImGuiCol.TextDisabled, DeriveSubText(ColCard)); ImGui.BeginChild($"##c{t}", new Vector2(ImGui.GetContentRegionAvail().X - 48, 0), ImGuiChildFlags.Borders | ImGuiChildFlags.AutoResizeY); ImGui.Dummy(new Vector2(0, 10)); d(); ImGui.Dummy(new Vector2(0, 10)); ImGui.EndChild(); ImGui.PopStyleColor(3); ImGui.Dummy(new Vector2(0, 10)); }
         static void Toggle(string l, ref bool v) { if (ImGui.Checkbox(l, ref v)) SaveConfig(); }
-        public static void SaveConfig() { try { Directory.CreateDirectory(Path.GetDirectoryName(_path)!); var o = new JsonSerializerOptions { WriteIndented = true, IncludeFields = true }; File.WriteAllText(_path, JsonSerializer.Serialize(Config, o)); } catch { } }
-        static void LoadConfig() { if (!File.Exists(_path)) return; try { var r = File.ReadAllText(_path); var jN = System.Text.Json.Nodes.JsonNode.Parse(r); if (jN["StatusList"] is System.Text.Json.Nodes.JsonArray sL && sL.All(n => n is System.Text.Json.Nodes.JsonValue)) { var sLL = JsonSerializer.Deserialize<List<string>>(sL.ToJsonString()); var tC = JsonSerializer.Deserialize<AppConfig>(r); if (tC != null && sLL != null) { tC.StatusList = sLL.Select(s => new StatusItem { Text = s }).ToList(); Config = tC; SaveConfig(); return; } } var o = new JsonSerializerOptions { IncludeFields = true, Converters = { new StatusItemConverter() } }; var lo = JsonSerializer.Deserialize<AppConfig>(r, o); if (lo != null) Config = lo; } catch { } }
+        public static void SaveConfig() 
+        { 
+            try 
+            { 
+                var dir = Path.GetDirectoryName(_path);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+                    
+                var options = new JsonSerializerOptions { WriteIndented = true, IncludeFields = true };
+                File.WriteAllText(_path, JsonSerializer.Serialize(Config, options));
+                Console.WriteLine($"[Config] Saved to {_path}");
+            } 
+            catch (Exception ex) 
+            { 
+                Console.WriteLine($"[Config Save Error]: {ex.Message}");
+                Console.WriteLine($"[Config Path]: {_path}");
+            } 
+        }
+
+        static void LoadConfig() 
+        { 
+            if (!File.Exists(_path)) return; 
+    
+            try 
+            { 
+                var rawJson = File.ReadAllText(_path); 
+        
+                // FIX: Define options ONCE with IncludeFields = true
+                var options = new JsonSerializerOptions { 
+                    IncludeFields = true, 
+                    Converters = { new StatusItemConverter() } 
+                };
+
+                var jsonNode = System.Text.Json.Nodes.JsonNode.Parse(rawJson); 
+        
+                // Check for legacy StatusList (Array of strings)
+                if (jsonNode["StatusList"] is System.Text.Json.Nodes.JsonArray sL && sL.All(n => n is System.Text.Json.Nodes.JsonValue)) 
+                { 
+                    var sLL = JsonSerializer.Deserialize<List<string>>(sL.ToJsonString()); 
+            
+                    // FIX: Use 'options' here so fields (IP, Toggles) are actually loaded!
+                    var tC = JsonSerializer.Deserialize<AppConfig>(rawJson, options); 
+            
+                    if (tC != null && sLL != null) 
+                    { 
+                        tC.StatusList = sLL.Select(s => new StatusItem { Text = s }).ToList(); 
+                        Config = tC; 
+                        SaveConfig(); 
+                        return; 
+                    } 
+                } 
+        
+                // Standard load
+                var loaded = JsonSerializer.Deserialize<AppConfig>(rawJson, options); 
+                if (loaded != null) Config = loaded; 
+        
+            } 
+            catch (Exception ex) 
+            { 
+                // Log error so you know if loading fails
+                Console.WriteLine($"[Config Load Error]: {ex.Message}");
+            } 
+        }
     }
     public class StatusItemConverter : JsonConverter<List<StatusItem>> { public override List<StatusItem> Read(ref Utf8JsonReader r, Type t, JsonSerializerOptions o) { if (r.TokenType == JsonTokenType.StartArray) { var l = new List<StatusItem>(); while (r.Read() && r.TokenType != JsonTokenType.EndArray) { if (r.TokenType == JsonTokenType.String) l.Add(new StatusItem { Text = r.GetString() }); else if (r.TokenType == JsonTokenType.StartObject) l.Add(JsonSerializer.Deserialize<StatusItem>(ref r, o)); } return l; } return new List<StatusItem>(); } public override void Write(Utf8JsonWriter w, List<StatusItem> v, JsonSerializerOptions o) => JsonSerializer.Serialize(w, v, o); }
 }
