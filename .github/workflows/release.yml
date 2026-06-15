@@ -1,5 +1,4 @@
 name: Build and Release
-
 permissions:
   contents: write
 
@@ -8,13 +7,11 @@ on:
     branches:
       - master
 
-
 jobs:
   versioning:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.bump.outputs.version }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,13 +21,46 @@ jobs:
       - name: Bump Version
         id: bump
         run: |
+          # 1. Get the latest tag, fallback to v0.0.0 if none exist
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           VERSION=${LATEST_TAG#v}
+          # Clean any trailing whitespace/newlines
+          VERSION=$(echo "$VERSION" | tr -d '[:space:]')
+          
           IFS='.' read -r MAJOR MINOR PATCH <<< "${VERSION:-0.0.0}"
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+
+          # 2. Default to patch bump
+          BUMP="patch"
+
+          # 3. Get commit messages since the last tag
+          if [ "$LATEST_TAG" = "v0.0.0" ] && [ -z "$(git tag)" ]; then
+            COMMITS=$(git log --pretty=format:"%s")
+          else
+            COMMITS=$(git log "${LATEST_TAG}..HEAD" --pretty=format:"%s")
+          fi
+
+          # 4. Determine bump type based on Conventional Commits
+          if echo "$COMMITS" | grep -qE "BREAKING CHANGE|^[a-zA-Z0-9_]+(\([a-zA-Z0-9_ -]+\))?!:"; then
+            BUMP="major"
+          elif echo "$COMMITS" | grep -qE "^feat(\([a-zA-Z0-9_ -]+\))?:"; then
+            BUMP="minor"
+          fi
+
+          # 5. Apply bump
+          if [ "$BUMP" = "major" ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [ "$BUMP" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "New version: $NEW_VERSION"
+          echo "New version: $NEW_VERSION (bump: $BUMP)"
         shell: bash
 
       - name: Push new tag
@@ -49,7 +79,6 @@ jobs:
             rid: win-x64
           - os: ubuntu-latest
             rid: linux-x64
-
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -82,7 +111,6 @@ jobs:
   appimage:
     needs: [versioning, build]
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -134,7 +162,6 @@ jobs:
   package:
     needs: [versioning, build, appimage]
     runs-on: ubuntu-latest
-
     steps:
       - name: Download all
         uses: actions/download-artifact@v4
@@ -163,7 +190,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - name: Download XOSC.zip
         uses: actions/download-artifact@v4
