@@ -1,12 +1,3 @@
-// HardwareService.cs — cross-platform hardware stats
-// On Windows: uses LibreHardwareMonitor (only referenced inside the IS_WINDOWS block)
-// On Linux:   reads /proc, /sys, and nvidia-smi
-//
-// The LHM package reference in XOSC.csproj is conditional on Windows, so this file
-// uses a runtime check rather than a compile-time one — LHM types are only touched
-// inside the if(IsWindows) path which is never JIT-compiled on Linux because the
-// assembly isn't present. The NativeMethods split handles the DllImport issue.
-
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -23,7 +14,6 @@ namespace XOSC
 {
     public static class HardwareService
     {
-        // ── Shared properties ──────────────────────────────────────────────────
         public static string CpuLoad    { get; private set; } = "--%";
         public static string GpuLoad    { get; private set; } = "--%";
         public static string RamUsed    { get; private set; } = "-- GB";
@@ -45,13 +35,10 @@ namespace XOSC
         private static IHardware? _ram;
 #endif
 
-        // ── Lifecycle ──────────────────────────────────────────────────────────
-
         public static void Initialize()
         {
 #if WINDOWS_BUILD
             if (_initialized) return;
-        
             try
             {
                 _computer = new Computer
@@ -64,31 +51,21 @@ namespace XOSC
                 };
                 _computer.Open();
                 _computer.Accept(new UpdateVisitor());
-
                 _cpu  = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu);
-
                 var gpus = _computer.Hardware.Where(h =>
                     h.HardwareType == HardwareType.GpuNvidia ||
                     h.HardwareType == HardwareType.GpuAmd    ||
                     h.HardwareType == HardwareType.GpuIntel).ToList();
-
                 string[] igpuKeywords = { "integrated ", "radeon(tm) graphics ", "radeon graphics ", "vega ", "uhd graphics ", "iris xe " };
                 _gpu  = gpus.FirstOrDefault(h => !igpuKeywords.Any(k => h.Name.Contains(k, StringComparison.OrdinalIgnoreCase)));
                 if (_gpu == null) _gpu = gpus.FirstOrDefault();
                 _igpu = gpus.FirstOrDefault(h => igpuKeywords.Any(k => h.Name.Contains(k, StringComparison.OrdinalIgnoreCase)));
-
                 _ram   = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Memory);
                 RamDdr = GetDDRVersion();
                 _initialized = true;
             }
-            catch
-            {
-                // Silently fail hardware init. 
-                // This prevents crashes on Windows 10 if the LHM driver is blocked by 
-                // ANY antivirus or security policy. Stats will just show "--".
-            }
+            catch { }
 #endif
-            // Linux: nothing to open
         }
 
         public static void Close()
@@ -97,7 +74,6 @@ namespace XOSC
             _computer?.Close();
             _initialized = false;
 #endif
-            // Linux: nothing to close
         }
 
         public static void Update()
@@ -109,13 +85,11 @@ namespace XOSC
 #endif
         }
 
-        // ── Windows update (LHM) ───────────────────────────────────────────────
 #if WINDOWS_BUILD
         private static void UpdateWindows()
         {
             if (!_initialized) return;
             _computer.Accept(new UpdateVisitor());
-
             if (_cpu != null)
             {
                 CpuLoad  = GetHighestSensorValue(_cpu, SensorType.Load,        new[] { "CPU Total", "Total" },                    "--%",  v => $"{v:F0}%",  strict: false);
@@ -126,14 +100,12 @@ namespace XOSC
                 if (CpuPower == "--W" && _igpu != null)
                     CpuPower = GetHighestSensorValue(_igpu, SensorType.Power, new[] { "Package", "Core", "Power", "PPT" }, "--W", v => $"{v:F0}W", strict: false);
             }
-
             if (_gpu != null)
             {
                 GpuLoad    = GetHighestSensorValue(_gpu, SensorType.Load,        new[] { "3D", "Core" },                                 "--% ", v => $"{v:F0}%",  strict: true);
                 GpuTemp    = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "GPU Core", "Core" },                           "--°C ", v => $"{v:F0}°C", strict: false);
                 GpuHotspot = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "Hot spot", "Hotspot" },                        "--°C ", v => $"{v:F0}°C", strict: true);
                 GpuPower   = GetHighestSensorValue(_gpu, SensorType.Power,       new[] { "GPU Power", "Package", "Total Board", "PPT" }, "--W ",  v => $"{v:F0}W",  strict: false);
-
                 float? vramUsed  = GetVramSensorValue(_gpu, new[] { "Dedicated Memory Used",  "Memory Used"  });
                 float? vramTotal = GetVramSensorValue(_gpu, new[] { "Dedicated Memory Total", "Memory Total" });
                 if (vramUsed.HasValue && vramTotal.HasValue)
@@ -142,8 +114,6 @@ namespace XOSC
                     VramTotal = $"{vramTotal.Value / 1024f:F1} GB";
                 }
             }
-
-            // RAM via GlobalMemoryStatusEx (more accurate than LHM for RAM)
             var memStatus = new NativeMethods.MEMORYSTATUSEX();
             memStatus.dwLength = (uint)Marshal.SizeOf(memStatus);
             if (NativeMethods.GlobalMemoryStatusEx(ref memStatus))
@@ -157,9 +127,7 @@ namespace XOSC
         {
             try
             {
-                var psi = new ProcessStartInfo("powershell",
-                    "-NoProfile -Command \"(Get-CimInstance Win32_PhysicalMemory).SMBIOSMemoryType\"")
-                    { RedirectStandardOutput = true, CreateNoWindow = true, UseShellExecute = false };
+                var psi = new ProcessStartInfo("powershell", "-NoProfile -Command \"(Get-CimInstance Win32_PhysicalMemory).SMBIOSMemoryType\"") { RedirectStandardOutput = true, CreateNoWindow = true, UseShellExecute = false };
                 using var p = Process.Start(psi);
                 string output = p!.StandardOutput.ReadToEnd().Trim();
                 var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
@@ -195,16 +163,10 @@ namespace XOSC
             foreach (var sub in hw.SubHardware) allSensors.AddRange(sub.Sensors);
             foreach (var name in priorityNames)
             {
-                var s = allSensors.FirstOrDefault(x =>
-                    (x.SensorType == SensorType.Data || x.SensorType == SensorType.SmallData) &&
-                    x.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && x.Value.HasValue);
+                var s = allSensors.FirstOrDefault(x => (x.SensorType == SensorType.Data || x.SensorType == SensorType.SmallData) && x.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && x.Value.HasValue);
                 if (s != null) return s.Value!.Value;
             }
-            var fb = allSensors.FirstOrDefault(s =>
-                (s.SensorType == SensorType.Data || s.SensorType == SensorType.SmallData) &&
-                (s.Name.Contains("GPU Memory Total", StringComparison.OrdinalIgnoreCase) ||
-                 s.Name.Contains("Memory Total",     StringComparison.OrdinalIgnoreCase)) &&
-                s.Value.HasValue);
+            var fb = allSensors.FirstOrDefault(s => (s.SensorType == SensorType.Data || s.SensorType == SensorType.SmallData) && (s.Name.Contains("GPU Memory Total", StringComparison.OrdinalIgnoreCase) || s.Name.Contains("Memory Total", StringComparison.OrdinalIgnoreCase)) && s.Value.HasValue);
             return fb?.Value;
         }
 
@@ -217,7 +179,6 @@ namespace XOSC
         }
 #endif
 
-        // ── Linux update (/proc + sysfs + nvidia-smi) ─────────────────────────
 #if !WINDOWS_BUILD
         private static void UpdateLinux()
         {
@@ -235,9 +196,7 @@ namespace XOSC
                 if (line == null) { CpuLoad = "--%"; return; }
                 var p = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 5) { CpuLoad = "--%"; return; }
-                long user = long.Parse(p[1]), nice = long.Parse(p[2]),
-                     sys  = long.Parse(p[3]), idle = long.Parse(p[4]),
-                     iow  = p.Length > 5 ? long.Parse(p[5]) : 0;
+                long user = long.Parse(p[1]), nice = long.Parse(p[2]), sys = long.Parse(p[3]), idle = long.Parse(p[4]), iow = p.Length > 5 ? long.Parse(p[5]) : 0;
                 long total = user + nice + sys + idle + iow;
                 CpuLoad = total > 0 ? $"{(total - idle - iow) * 100.0 / total:F0}%" : "--%";
             }
@@ -256,8 +215,7 @@ namespace XOSC
                     if (!File.Exists(tempPath)) continue;
                     string type = File.Exists(typePath) ? File.ReadAllText(typePath).Trim() : "";
                     if (!type.Contains("acpitz") && !type.Contains("x86_pkg") && !type.Contains("cpu")) continue;
-                    if (double.TryParse(File.ReadAllText(tempPath).Trim(), out double raw))
-                        best = Math.Max(best, raw / 1000.0);
+                    if (double.TryParse(File.ReadAllText(tempPath).Trim(), out double raw)) best = Math.Max(best, raw / 1000.0);
                 }
                 CpuTemp = best > double.MinValue ? $"{best:F0}°C" : "--°C";
             }
@@ -274,7 +232,7 @@ namespace XOSC
                     var parts = line.Split(':', 2);
                     if (parts.Length < 2) continue;
                     string key = parts[0].Trim(), val = parts[1].Trim().Split(' ')[0];
-                    if (key == "MemTotal"     && long.TryParse(val, out long t)) memTotal = t;
+                    if (key == "MemTotal" && long.TryParse(val, out long t)) memTotal = t;
                     if (key == "MemAvailable" && long.TryParse(val, out long a)) memAvail = a;
                 }
                 RamUsed  = $"{(memTotal - memAvail) / (1024.0 * 1024.0):F1} GB";
@@ -283,19 +241,13 @@ namespace XOSC
             catch { RamUsed = "-- GB"; RamTotal = "-- GB"; }
         }
 
-        private static void UpdateGpu()
-        {
-            if (TryUpdateNvidiaGpu()) return;
-            TryUpdateAmdGpu();
-        }
+        private static void UpdateGpu() { if (TryUpdateNvidiaGpu()) return; TryUpdateAmdGpu(); }
 
         private static bool TryUpdateNvidiaGpu()
         {
             try
             {
-                var psi = new ProcessStartInfo("nvidia-smi",
-                    "--query-gpu=utilization.gpu,temperature.gpu,power.draw,memory.used,memory.total --format=csv,noheader,nounits")
-                    { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+                var psi = new ProcessStartInfo("nvidia-smi", "--query-gpu=utilization.gpu,temperature.gpu,power.draw,memory.used,memory.total --format=csv,noheader,nounits") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
                 using var proc = Process.Start(psi);
                 string? raw = proc?.StandardOutput.ReadLine()?.Trim();
                 if (string.IsNullOrEmpty(raw)) return false;
@@ -315,112 +267,45 @@ namespace XOSC
         {
             try
             {
-                var drmCards = Directory.GetDirectories("/sys/class/drm", "card*")
-                    .Where(c => !c.Contains('-'))
-                    .ToList();
-
-                string? selectedCard = null;
-                long largestVram = -1;
-
+                var drmCards = Directory.GetDirectories("/sys/class/drm", "card*").Where(c => !c.Contains('-')).ToList();
+                string? selectedCard = null; long largestVram = -1;
                 foreach (var card in drmCards)
                 {
                     string device = Path.Combine(card, "device");
-
-                    // AMD only
                     string vendorFile = Path.Combine(device, "vendor");
-
-                    if (!File.Exists(vendorFile))
-                        continue;
-
+                    if (!File.Exists(vendorFile)) continue;
                     string vendor = File.ReadAllText(vendorFile).Trim().ToLower();
-
-                    if (vendor != "0x1002")
-                        continue;
-
-                    // Read VRAM amount
+                    if (vendor != "0x1002") continue;
                     string vramFile = Path.Combine(device, "mem_info_vram_total");
-
-                    long vram = 0;
-
-                    if (File.Exists(vramFile))
-                    {
-                        long.TryParse(File.ReadAllText(vramFile).Trim(), out vram);
-                    }
-
-                    // Prefer GPU with largest VRAM
-                    if (vram > largestVram)
-                    {
-                        largestVram = vram;
-                        selectedCard = card;
-                    }
+                    long vram = 0; if (File.Exists(vramFile)) long.TryParse(File.ReadAllText(vramFile).Trim(), out vram);
+                    if (vram > largestVram) { largestVram = vram; selectedCard = card; }
                 }
-
-                // Fallback: highest card number
-                if (selectedCard == null && drmCards.Count > 0)
-                {
-                    selectedCard = drmCards
-                        .OrderByDescending(c =>
-                        {
-                            string name = Path.GetFileName(c);
-                            return int.TryParse(name.Replace("card", ""), out int n) ? n : -1;
-                        })
-                        .FirstOrDefault();
-                }
-
-                if (selectedCard == null)
-                    return;
-
+                if (selectedCard == null && drmCards.Count > 0) selectedCard = drmCards.OrderByDescending(c => { string name = Path.GetFileName(c); return int.TryParse(name.Replace("card", ""), out int n) ? n : -1; }).FirstOrDefault();
+                if (selectedCard == null) return;
                 string selectedDevice = Path.Combine(selectedCard, "device");
-
-                // GPU usage
                 string busyFile = Path.Combine(selectedDevice, "gpu_busy_percent");
-
-                if (File.Exists(busyFile))
-                    GpuLoad = $"{File.ReadAllText(busyFile).Trim()}%";
-
-                // Temps + Power
+                if (File.Exists(busyFile)) GpuLoad = $"{File.ReadAllText(busyFile).Trim()}%";
                 string hwmonBase = Path.Combine(selectedDevice, "hwmon");
-
                 if (Directory.Exists(hwmonBase))
                 {
                     var hwmon = Directory.GetDirectories(hwmonBase).FirstOrDefault();
-
                     if (hwmon != null)
                     {
                         string tempFile = Path.Combine(hwmon, "temp1_input");
-
-                        if (File.Exists(tempFile) &&
-                            double.TryParse(File.ReadAllText(tempFile).Trim(), out double tRaw))
-                        {
-                            GpuTemp = $"{tRaw / 1000.0:F0}°C";
-                        }
-
+                        if (File.Exists(tempFile) && double.TryParse(File.ReadAllText(tempFile).Trim(), out double tRaw)) GpuTemp = $"{tRaw / 1000.0:F0}°C";
                         string powerFile = Path.Combine(hwmon, "power1_average");
-
-                        if (File.Exists(powerFile) &&
-                            double.TryParse(File.ReadAllText(powerFile).Trim(), out double pRaw))
-                        {
-                            GpuPower = $"{pRaw / 1_000_000.0:F0}W";
-                        }
+                        if (File.Exists(powerFile) && double.TryParse(File.ReadAllText(powerFile).Trim(), out double pRaw)) GpuPower = $"{pRaw / 1_000_000.0:F0}W";
                     }
                 }
-
-                // VRAM
                 string vUsedFile = Path.Combine(selectedDevice, "mem_info_vram_used");
                 string vTotalFile = Path.Combine(selectedDevice, "mem_info_vram_total");
-
-                if (File.Exists(vUsedFile) &&
-                    File.Exists(vTotalFile) &&
-                    long.TryParse(File.ReadAllText(vUsedFile).Trim(), out long vU) &&
-                    long.TryParse(File.ReadAllText(vTotalFile).Trim(), out long vT))
+                if (File.Exists(vUsedFile) && File.Exists(vTotalFile) && long.TryParse(File.ReadAllText(vUsedFile).Trim(), out long vU) && long.TryParse(File.ReadAllText(vTotalFile).Trim(), out long vT))
                 {
                     VramUsed = $"{vU / (1024.0 * 1024.0 * 1024.0):F1} GB";
                     VramTotal = $"{vT / (1024.0 * 1024.0 * 1024.0):F1} GB";
                 }
             }
-            catch
-            {
-            }
+            catch { }
         }
 #endif
     }
