@@ -51,32 +51,42 @@ namespace XOSC
         {
 #if WINDOWS_BUILD
             if (_initialized) return;
-            _computer = new Computer
+        
+            try
             {
-                IsCpuEnabled         = true,
-                IsGpuEnabled         = true,
-                IsMemoryEnabled      = true,
-                IsMotherboardEnabled = true,
-                IsControllerEnabled  = true
-            };
-            _computer.Open();
-            _computer.Accept(new UpdateVisitor());
+                _computer = new Computer
+                {
+                    IsCpuEnabled         = true,
+                    IsGpuEnabled         = true,
+                    IsMemoryEnabled      = true,
+                    IsMotherboardEnabled = true,
+                    IsControllerEnabled  = true
+                };
+                _computer.Open();
+                _computer.Accept(new UpdateVisitor());
 
-            _cpu  = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu);
+                _cpu  = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu);
 
-            var gpus = _computer.Hardware.Where(h =>
-                h.HardwareType == HardwareType.GpuNvidia ||
-                h.HardwareType == HardwareType.GpuAmd    ||
-                h.HardwareType == HardwareType.GpuIntel).ToList();
+                var gpus = _computer.Hardware.Where(h =>
+                    h.HardwareType == HardwareType.GpuNvidia ||
+                    h.HardwareType == HardwareType.GpuAmd    ||
+                    h.HardwareType == HardwareType.GpuIntel).ToList();
 
-            string[] igpuKeywords = { "integrated", "radeon(tm) graphics", "radeon graphics", "vega", "uhd graphics", "iris xe" };
-            _gpu  = gpus.FirstOrDefault(h => !igpuKeywords.Any(k => h.Name.Contains(k, StringComparison.OrdinalIgnoreCase)));
-            if (_gpu == null) _gpu = gpus.FirstOrDefault();
-            _igpu = gpus.FirstOrDefault(h =>  igpuKeywords.Any(k => h.Name.Contains(k, StringComparison.OrdinalIgnoreCase)));
+                string[] igpuKeywords = { "integrated ", "radeon(tm) graphics ", "radeon graphics ", "vega ", "uhd graphics ", "iris xe " };
+                _gpu  = gpus.FirstOrDefault(h => !igpuKeywords.Any(k => h.Name.Contains(k, StringComparison.OrdinalIgnoreCase)));
+                if (_gpu == null) _gpu = gpus.FirstOrDefault();
+                _igpu = gpus.FirstOrDefault(h => igpuKeywords.Any(k => h.Name.Contains(k, StringComparison.OrdinalIgnoreCase)));
 
-            _ram   = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Memory);
-            RamDdr = GetDDRVersion();
-            _initialized = true;
+                _ram   = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Memory);
+                RamDdr = GetDDRVersion();
+                _initialized = true;
+            }
+            catch
+            {
+                // Silently fail hardware init. 
+                // This prevents crashes on Windows 10 if the LHM driver is blocked by 
+                // ANY antivirus or security policy. Stats will just show "--".
+            }
 #endif
             // Linux: nothing to open
         }

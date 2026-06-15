@@ -564,6 +564,8 @@ namespace XOSC
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "xosc", "config.json") 
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "xosc", "config.json");
         private static string _chatIn = "";
+        private static bool _alertDismissed = false;
+        private static string _lastDismissedAlert = "";
         private static Mutex? _mtx; private static int _navPage = 0;
         private static readonly string[] _navLabels = { "Dashboard", "Statuses", "Chatbox", "Hardware", "Network", "Appearance", "Misc", "Updater" };
         private static Vector4 ColAccent, ColBg, ColSidebar, ColCard, ColText, ColSubText;
@@ -675,23 +677,21 @@ namespace XOSC
 
             Raylib.CloseWindow();
         }
-
 #if WINDOWS_BUILD
         private static void CreateStartMenuShortcut()
         {
             try
             {
-                string exePath   = Process.GetCurrentProcess().MainModule!.FileName;
+                string exePath = Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrEmpty(exePath)) return;
+
                 string startMenu = @"C:\ProgramData\Microsoft\Windows\Start Menu\Programs";
-                string lnkPath   = Path.Combine(startMenu, "XOSC.lnk");
+                string lnkPath = Path.Combine(startMenu, "XOSC.lnk");
+                if (File.Exists(lnkPath)) return;
 
-                if (File.Exists(lnkPath))
-                    return;
-
-                // Need admin to write to ProgramData — restart elevated if not already
-                var identity  = System.Security.Principal.WindowsIdentity.GetCurrent();
+                var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
                 var principal = new System.Security.Principal.WindowsPrincipal(identity);
-                bool isAdmin  = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+                bool isAdmin = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
 
                 if (!isAdmin)
                 {
@@ -700,24 +700,35 @@ namespace XOSC
                         Process.Start(new ProcessStartInfo(exePath)
                         {
                             UseShellExecute = true,
-                            Verb            = "runas",
+                            Verb = "runas",
                         });
+                
+                        // SUCCESS: Elevated instance started. Exit this non-admin instance.
+                        Environment.Exit(0);
+                        return;
                     }
-                    catch { /* user declined UAC */ }
-                    Environment.Exit(0);
-                    return;
+                    catch 
+                    { 
+                        // User declined UAC or elevation failed. 
+                        // DO NOT EXIT. Let the app continue running without the shortcut.
+                        return; 
+                    }
                 }
 
-                // Use Shell32 COM directly — no PowerShell, no quoting issues
                 Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
                 if (shellType == null) return;
-                dynamic shell   = Activator.CreateInstance(shellType)!;
-                dynamic shortcut = shell.CreateShortcut(lnkPath);
-                shortcut.TargetPath       = exePath;
-                shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
-                shortcut.Description      = "XOSC - VRChat OSC Overlay";
-                shortcut.IconLocation     = $"{exePath},0";
-                shortcut.Save();
+        
+                try
+                {
+                    dynamic shell = Activator.CreateInstance(shellType)!;
+                    dynamic shortcut = shell.CreateShortcut(lnkPath);
+                    shortcut.TargetPath = exePath;
+                    shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
+                    shortcut.Description = "XOSC - VRChat OSC Overlay";
+                    shortcut.IconLocation = $"{exePath},0";
+                    shortcut.Save();
+                }
+                catch { }
             }
             catch { }
         }
@@ -726,7 +737,7 @@ namespace XOSC
         public static string FindVrcLog() { if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) { string wP = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AppData", "LocalLow", "VRChat", "VRChat"); if (Directory.Exists(wP)) return Directory.GetFiles(wP, "output_log_*.txt").OrderByDescending(File.GetLastWriteTime).FirstOrDefault(); return null; } string h = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile); string[] s = { Path.Combine(h, ".local/share/Steam"), Path.Combine(h, ".var/app/com.valvesoftware.Steam/.local/share/Steam") }; foreach (var b in s) { if (!Directory.Exists(b)) continue; string v = Path.Combine(b, "steamapps", "libraryfolders.vdf"); List<string> l = new() { b }; if (File.Exists(v)) { var ms = Regex.Matches(File.ReadAllText(v), "\"path\"\\s+\"(.+?)\""); foreach (Match m in ms) l.Add(m.Groups[1].Value.Replace("\\\\", "/")); } foreach (var lib in l) { string p = Path.Combine(lib, "steamapps/compatdata/438100/pfx/drive_c/users/steamuser/AppData/LocalLow/VRChat/VRChat"); if (Directory.Exists(p)) return Directory.GetFiles(p, "output_log_*.txt").OrderByDescending(File.GetLastWriteTime).FirstOrDefault(); } } return null; }
         static void ApplyTheme() { var s = ImGui.GetStyle(); s.WindowRounding = Config.WindowRounding; s.ChildRounding = Config.ChildRounding; s.FrameRounding = Config.FrameRounding; s.PopupRounding = Config.FrameRounding; s.ScrollbarRounding = Config.FrameRounding; s.GrabRounding = Config.FrameRounding; s.TabRounding = Config.TabRounding; s.WindowPadding = new Vector2(12, 12); s.FramePadding = new Vector2(8, 4); s.ItemSpacing = new Vector2(8, 6); ImGui.GetIO().FontGlobalScale = Config.FontScale; ColAccent = V4(Config.AccentColor); ColBg = V4(Config.BgColor); ColSidebar = V4(Config.SidebarColor); ColCard = V4(Config.CardColor); ColText = DeriveText(ColBg); ColSubText = DeriveSubText(ColBg); var colors = ImGui.GetStyle().Colors; var a = ColAccent; var bg = ColBg; var c = ColCard; float b = 0.07f; var frame = new Vector4(Math.Min(c.X+b, 1f), Math.Min(c.Y+b, 1f), Math.Min(c.Z+b, 1f), 1f); var frameH = new Vector4(Math.Min(c.X+b+0.04f, 1f), Math.Min(c.Y+b+0.04f, 1f), Math.Min(c.Z+b+0.04f, 1f), 1f); var frameA = new Vector4(Math.Min(c.X+b+0.08f, 1f), Math.Min(c.Y+b+0.08f, 1f), Math.Min(c.Z+b+0.08f, 1f), 1f); var popup = new Vector4(Math.Min(c.X+0.04f, 1f), Math.Min(c.Y+0.04f, 1f), Math.Min(c.Z+0.06f, 1f), 1f); colors[(int)ImGuiCol.WindowBg] = bg; colors[(int)ImGuiCol.ChildBg] = c; colors[(int)ImGuiCol.PopupBg] = popup; colors[(int)ImGuiCol.MenuBarBg] = c; colors[(int)ImGuiCol.FrameBg] = frame; colors[(int)ImGuiCol.FrameBgHovered] = frameH; colors[(int)ImGuiCol.FrameBgActive] = frameA; colors[(int)ImGuiCol.Button] = new Vector4(a.X, a.Y, a.Z, 0.20f); colors[(int)ImGuiCol.ButtonHovered] = new Vector4(a.X, a.Y, a.Z, 0.40f); colors[(int)ImGuiCol.ButtonActive] = new Vector4(a.X, a.Y, a.Z, 0.65f); colors[(int)ImGuiCol.CheckMark] = a; colors[(int)ImGuiCol.SliderGrab] = a; colors[(int)ImGuiCol.SliderGrabActive] = new Vector4(a.X, a.Y, a.Z, 0.85f); colors[(int)ImGuiCol.ScrollbarBg] = new Vector4(bg.X, bg.Y, bg.Z, 1f); colors[(int)ImGuiCol.ScrollbarGrab] = new Vector4(a.X, a.Y, a.Z, 0.35f); colors[(int)ImGuiCol.ScrollbarGrabHovered] = new Vector4(a.X, a.Y, a.Z, 0.65f); colors[(int)ImGuiCol.ScrollbarGrabActive] = a; colors[(int)ImGuiCol.Header] = new Vector4(a.X, a.Y, a.Z, 0.22f); colors[(int)ImGuiCol.HeaderHovered] = new Vector4(a.X, a.Y, a.Z, 0.38f); colors[(int)ImGuiCol.HeaderActive] = new Vector4(a.X, a.Y, a.Z, 0.55f); colors[(int)ImGuiCol.TitleBg] = c; colors[(int)ImGuiCol.TitleBgActive] = popup; colors[(int)ImGuiCol.TitleBgCollapsed] = c; colors[(int)ImGuiCol.Tab] = c; colors[(int)ImGuiCol.TabHovered] = new Vector4(a.X, a.Y, a.Z, 0.35f); colors[(int)ImGuiCol.TabSelected] = new Vector4(a.X, a.Y, a.Z, 0.25f); colors[(int)ImGuiCol.TabSelectedOverline] = a; colors[(int)ImGuiCol.TabDimmed] = c; colors[(int)ImGuiCol.TabDimmedSelected] = new Vector4(a.X, a.Y, a.Z, 0.14f); colors[(int)ImGuiCol.TabDimmedSelectedOverline] = new Vector4(a.X, a.Y, a.Z, 0.40f); colors[(int)ImGuiCol.Separator] = new Vector4(a.X, a.Y, a.Z, 0.22f); colors[(int)ImGuiCol.SeparatorHovered] = new Vector4(a.X, a.Y, a.Z, 0.55f); colors[(int)ImGuiCol.SeparatorActive] = a; colors[(int)ImGuiCol.ResizeGrip] = new Vector4(a.X, a.Y, a.Z, 0.18f); colors[(int)ImGuiCol.ResizeGripHovered] = new Vector4(a.X, a.Y, a.Z, 0.45f); colors[(int)ImGuiCol.ResizeGripActive] = a; colors[(int)ImGuiCol.Border] = new Vector4(a.X, a.Y, a.Z, 0.18f); colors[(int)ImGuiCol.BorderShadow] = new Vector4(0f, 0f, 0f, 0f); bool lT = (bg.X + bg.Y + bg.Z) / 3f > 0.6f; colors[(int)ImGuiCol.Text] = lT ? new Vector4(0.10f, 0.10f, 0.13f, 1f) : new Vector4(0.92f, 0.92f, 0.95f, 1f); colors[(int)ImGuiCol.TextDisabled] = lT ? new Vector4(0.40f, 0.40f, 0.45f, 1f) : new Vector4(0.50f, 0.50f, 0.55f, 1f); colors[(int)ImGuiCol.TextLink] = a; colors[(int)ImGuiCol.NavCursor] = a; colors[(int)ImGuiCol.DragDropTarget] = a; colors[(int)ImGuiCol.TextSelectedBg] = new Vector4(a.X, a.Y, a.Z, 0.35f); colors[(int)ImGuiCol.NavWindowingHighlight] = new Vector4(a.X, a.Y, a.Z, 0.70f); colors[(int)ImGuiCol.NavWindowingDimBg] = new Vector4(0f, 0f, 0f, 0.45f); colors[(int)ImGuiCol.ModalWindowDimBg] = new Vector4(0f, 0f, 0f, 0.45f); }
 
-        static void DrawUI() { ApplyTheme(); int w = Raylib.GetScreenWidth(), sh = Raylib.GetScreenHeight(); float sw = Config.SidebarWidth; ImGui.SetNextWindowPos(Vector2.Zero); ImGui.SetNextWindowSize(new Vector2(w, sh)); ImGui.Begin("##root", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollbar); string alert = MusicChatEngine.ActiveAlert; if (!string.IsNullOrWhiteSpace(alert)) { ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.55f, 0.08f, 0.08f, 1f)); ImGui.BeginChild("##alertbanner", new Vector2(w, 30), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.SetCursorPos(new Vector2(10, 6)); ImGui.TextColored(new Vector4(1f, 0.85f, 0.85f, 1f), alert); ImGui.EndChild(); ImGui.PopStyleColor(); } ImGui.PushStyleColor(ImGuiCol.ChildBg, ColSidebar); ImGui.BeginChild("##sidebar", new Vector2(sw, sh), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.Dummy(new Vector2(0, 20)); ImGui.SetCursorPosX(20); ImGui.TextColored(ColAccent, "XOSC"); ImGui.SetCursorPosX(20); ImGui.TextColored(ColSubText, $"v{AppVersion}"); ImGui.Dummy(new Vector2(0, 20)); for (int i = 0; i < _navLabels.Length; i++) { bool active = _navPage == i; ImGui.PushStyleColor(ImGuiCol.Button, active ? new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.15f) : Vector4.Zero); ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.08f)); ImGui.PushStyleColor(ImGuiCol.Text, active ? ColAccent : ColText); ImGui.SetCursorPosX(10); if (ImGui.Button(_navLabels[i], new Vector2(sw - 20, 36))) _navPage = i; ImGui.PopStyleColor(3); } ImGui.EndChild(); ImGui.PopStyleColor(); ImGui.SameLine(); ImGui.PushStyleColor(ImGuiCol.ChildBg, ColBg); ImGui.BeginChild("##content", new Vector2(w - sw, sh), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.Dummy(new Vector2(0, 24)); switch (_navPage) { 
+        static void DrawUI() { ApplyTheme(); int w = Raylib.GetScreenWidth(), sh = Raylib.GetScreenHeight(); float sw = Config.SidebarWidth; ImGui.SetNextWindowPos(Vector2.Zero); ImGui.SetNextWindowSize(new Vector2(w, sh)); ImGui.Begin("##root", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollbar); string alert = MusicChatEngine.ActiveAlert; if (!string.IsNullOrWhiteSpace(alert) && !(alert == _lastDismissedAlert && _alertDismissed)) { ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.55f, 0.08f, 0.08f, 1f)); ImGui.BeginChild("##alertbanner", new Vector2(w, 30), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.SetCursorPos(new Vector2(10, 6)); ImGui.TextColored(new Vector4(1f, 0.85f, 0.85f, 1f), alert); ImGui.SameLine(w - Config.SidebarWidth - 40); ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.75f, 0.12f, 0.12f, 1f)); ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.90f, 0.18f, 0.18f, 1f)); if (ImGui.Button("X##dismissalert", new Vector2(28, 20))) { _alertDismissed = true; _lastDismissedAlert = alert; } ImGui.PopStyleColor(2); ImGui.EndChild(); ImGui.PopStyleColor(); } ImGui.PushStyleColor(ImGuiCol.ChildBg, ColSidebar); ImGui.BeginChild("##sidebar", new Vector2(sw, sh), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.Dummy(new Vector2(0, 20)); ImGui.SetCursorPosX(20); ImGui.TextColored(ColAccent, "XOSC"); ImGui.SetCursorPosX(20); ImGui.TextColored(ColSubText, $"v{AppVersion}"); ImGui.Dummy(new Vector2(0, 20)); for (int i = 0; i < _navLabels.Length; i++) { bool active = _navPage == i; ImGui.PushStyleColor(ImGuiCol.Button, active ? new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.15f) : Vector4.Zero); ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.08f)); ImGui.PushStyleColor(ImGuiCol.Text, active ? ColAccent : ColText); ImGui.SetCursorPosX(10); if (ImGui.Button(_navLabels[i], new Vector2(sw - 20, 36))) _navPage = i; ImGui.PopStyleColor(3); } ImGui.EndChild(); ImGui.PopStyleColor(); ImGui.SameLine(); ImGui.PushStyleColor(ImGuiCol.ChildBg, ColBg); ImGui.BeginChild("##content", new Vector2(w - sw, sh), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.Dummy(new Vector2(0, 24)); switch (_navPage) { 
             case 0: Card("Dashboard", () => { Toggle("Enable Chatbox", ref Config.ChatboxEnabled); ImGui.Text($"Engine State: {MusicChatEngine.EngineState}"); ImGui.Text($"Packets Sent: {MusicChatEngine.PacketsSent}"); ImGui.Text($"Weather Alert: {(string.IsNullOrEmpty(MusicChatEngine.ActiveAlert) ? "None" : "ACTIVE")}"); ImGui.Dummy(new Vector2(0, 6)); ImGui.InputText("Manual Message", ref _chatIn, 128); if (ImGui.Button("Send Manual")) { MusicChatEngine.SetManual(_chatIn); _chatIn = ""; } ImGui.Dummy(new Vector2(0, 10)); if (ImGui.InputText("OSC IP", ref Config.OscIP, 64)) SaveConfig(); if (ImGui.InputInt("OSC Port", ref Config.OscPort)) SaveConfig(); }); break; 
             case 1: Card("Statuses", () => { lock (MusicChatEngine.ListLock) { for (int i = 0; i < Config.StatusList.Count; i++) { ImGui.PushID(i); var item = Config.StatusList[i]; bool isSelected = _selectedIndices.Contains(i); if (ImGui.Checkbox("##select", ref isSelected)) { if (isSelected) _selectedIndices.Add(i); else _selectedIndices.Remove(i); } ImGui.SameLine(); if (ImGui.Button(item.IsFavorited ? "[*]" : "[ ]", new Vector2(32, 24))) { item.IsFavorited = !item.IsFavorited; Config.StatusList = Config.StatusList.OrderByDescending(s => s.IsFavorited).ToList(); SaveConfig(); ImGui.PopID(); break; } ImGui.SameLine(); if (ImGui.Button("Up", new Vector2(32, 24)) && i > 0) { (Config.StatusList[i], Config.StatusList[i - 1]) = (Config.StatusList[i - 1], Config.StatusList[i]); SaveConfig(); } ImGui.SameLine(); if (ImGui.Button("Dn", new Vector2(32, 24)) && i < Config.StatusList.Count - 1) { (Config.StatusList[i], Config.StatusList[i + 1]) = (Config.StatusList[i + 1], Config.StatusList[i]); SaveConfig(); } ImGui.SameLine(); string statusText = item.Text; if (ImGui.InputText("##s", ref statusText, 100)) { item.Text = statusText; SaveConfig(); } ImGui.PopID(); } } ImGui.Dummy(new Vector2(0, 10)); if (ImGui.Button("+ Add New Status")) Config.StatusList.Add(new StatusItem()); ImGui.SameLine(); if (_selectedIndices.Any() && ImGui.Button("Remove Selected")) { var sorted = _selectedIndices.ToList(); sorted.Sort(); for (int i = sorted.Count - 1; i >= 0; i--) Config.StatusList.RemoveAt(sorted[i]); _selectedIndices.Clear(); SaveConfig(); } }); break; 
             case 2: Card("Chatbox", () => { Toggle("Status Text", ref Config.StatusTextMode); Toggle("Pronouns##Toggle", ref Config.PronounsMode); Toggle("Song Mode", ref Config.SongMode); if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) Toggle("Song Progress Bar", ref Config.SongProgressMode); Toggle("Audio Visualizer", ref Config.AudioVisualizerMode); Toggle("Time", ref Config.TimeMode); Toggle("Military Time", ref Config.MilitaryTime); Toggle("Distro", ref Config.DistroMode); Toggle("Thin Mode", ref Config.ThinMode); Toggle("Auto-Cycle", ref Config.AutoCycleStatus); Toggle("Stylize All Text", ref Config.StylizeTextMode); DrawCombo("Pronouns", _pronounsList, ref Config.Pronouns, ref Config.CustomPronouns); DrawCombo("Country", _countriesList, ref Config.Country, ref Config.CustomCountry); string[] states = _statesMap.ContainsKey(Config.Country) ? _statesMap[Config.Country] : new[] { "Custom..." }; DrawCombo("State", states, ref Config.State, ref Config.CustomState); string[] cities = _citiesMap.ContainsKey(Config.State) ? _citiesMap[Config.State] : new[] { "Custom..." }; DrawCombo("City", cities, ref Config.City, ref Config.CustomCity); ImGui.SliderInt("Interval##slider", ref Config.Interval, 1, 60); }); Card("Weather", () => { Toggle("Enable Weather", ref Config.WeatherMode); Toggle("Show Temperature", ref Config.WeatherTempMode); Toggle("Emergency Alerts", ref Config.WeatherAlertMode); int tempIdx = Array.IndexOf(_tempUnits, Config.WeatherTempUnit); if (tempIdx < 0) tempIdx = 0; if (ImGui.Combo("Temp Unit##tempunit", ref tempIdx, _tempUnits, _tempUnits.Length)) { Config.WeatherTempUnit = _tempUnits[tempIdx]; SaveConfig(); } }); break; 
