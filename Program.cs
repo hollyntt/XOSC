@@ -351,6 +351,7 @@ namespace XOSC
         private static int _statusIdx = 0;
         private static bool _showHardwareTick = false;
         private static string _cpu = "CPU", _gpu = "GPU";
+        private static string _distroName = null;
         private static bool _isAfk = false;
         private static DateTime _lastWeatherFetch = DateTime.MinValue;
         private static int _weatherCode = 0;
@@ -421,13 +422,23 @@ namespace XOSC
                 if (cfg.TimeMode) { string t2 = DateTime.Now.ToString(cfg.MilitaryTime ? "HH:mm" : "hh:mm tt"); e2.Add($"🕒 {(cfg.StylizeTextMode ? Stylize(t2) : t2)}"); }
                 if (cfg.DistroMode) { string dn2 = GetDistroName(); e2.Add(cfg.StylizeTextMode ? Stylize(dn2) : dn2); }
                 if (e2.Count > 0) p2.Add(string.Join(" | ", e2));
+                
                 string cS = cfg.HwNameMode ? StatsComponentType.CPU.GetSmallName() : "CPU"; string gS = cfg.HwNameMode ? StatsComponentType.GPU.GetSmallName() : "GPU"; string rS = cfg.HwNameMode ? StatsComponentType.RAM.GetSmallName() : "RAM"; string vS = cfg.HwNameMode ? StatsComponentType.VRAM.GetSmallName() : "VRAM";
                 string cId = cfg.CustomCpuNameOn ? (cfg.HwNameMode ? Stylize(cfg.CustomCpuName) : cfg.CustomCpuName) : (cfg.HwNameMode ? Stylize(_cpu) : cS);
                 string cL = $"🖥️ {cId}: {HardwareService.CpuLoad}"; List<string> cEx = new(); if (cfg.CpuTempOn) cEx.Add(HardwareService.CpuTemp); if (cfg.CpuPowerOn) cEx.Add(HardwareService.CpuPower); if (cEx.Count > 0) cL += $" ({string.Join(" / ", cEx)})";
+                
                 string gId = cfg.CustomGpuNameOn ? (cfg.HwNameMode ? Stylize(cfg.CustomGpuName) : cfg.CustomGpuName) : (cfg.HwNameMode ? Stylize(_gpu) : gS);
                 string gL = $"🎮 {gId}: {HardwareService.GpuLoad}"; List<string> gEx = new(); if (cfg.GpuTempOn) gEx.Add(HardwareService.GpuTemp); if (cfg.GpuHotspotOn) gEx.Add($"H {HardwareService.GpuHotspot}"); if (cfg.GpuPowerOn) gEx.Add(HardwareService.GpuPower); if (gEx.Count > 0) gL += $" ({string.Join(" / ", gEx)})";
-                p2.Add($"{cL} | {gL}");
-                var mem = new List<string>(); if (cfg.ShowRam) { string ddr = (cfg.RamDdrVersionOn && !string.IsNullOrEmpty(HardwareService.RamDdr)) ? $" ⁽{HardwareService.RamDdr}⁾" : ""; mem.Add($"🐏 {rS}{ddr}: {HardwareService.RamUsed}/{HardwareService.RamTotal}"); } if (cfg.ShowVram) mem.Add($"🎞️ {vS}: {HardwareService.VramUsed}/{HardwareService.VramTotal}"); if (cfg.VrBatteryMode && RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) mem.Add($"🔋 VR: {GetVrBattery()}"); if (mem.Count > 0) p2.Add(string.Join(" | ", mem));
+                
+                p2.Add(cL);
+                p2.Add(gL);
+                
+                var mem = new List<string>(); 
+                if (cfg.ShowRam) { string ddr = (cfg.RamDdrVersionOn && !string.IsNullOrEmpty(HardwareService.RamDdr)) ? $" ⁽{HardwareService.RamDdr}⁾" : ""; mem.Add($"🐏 {rS}{ddr}: {HardwareService.RamUsed}/{HardwareService.RamTotal}"); } 
+                if (cfg.ShowVram) mem.Add($"🎞️ {vS}: {HardwareService.VramUsed}/{HardwareService.VramTotal}"); 
+                if (cfg.VrBatteryMode && RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) mem.Add($"🔋 VR: {GetVrBattery()}"); 
+                
+                foreach (var m in mem) p2.Add(m);
             }
             List<string> active; if (p1.Count > 0 && p2.Count > 0) { _showHardwareTick = !_showHardwareTick; active = _showHardwareTick ? p2 : p1; } else if (p2.Count > 0) { _showHardwareTick = true; active = p2; } else { _showHardwareTick = false; active = p1; }
             string outStr = string.Join("\n", active); if (cfg.ThinMode) { if (outStr.Length > 138) outStr = outStr[..138]; outStr += "\u0003\u001f"; } SendOsc("/chatbox/input", outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = alertActive ? "Alert" : "Chatting";
@@ -540,7 +551,48 @@ namespace XOSC
         }
 
         private static void ScrapeHardwareNames() { string log = Program.FindVrcLog(); if (log == null) return; try { using var fs = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); using var sr = new StreamReader(fs); string l; int count = 0; while ((l = sr.ReadLine()) != null && count < 2000) { count++; if (l.Contains("Processor Type:")) { string r = l.Substring(l.IndexOf(':') + 1); _cpu = Regex.Replace(Regex.Replace(r, @"(?i)(AMD|Intel(?:\(R\))?|Core(?:\(TM\))?|Ryzen|\d+-Core|Processor|@.*)", " "), @"\s+", " ").Trim(); } else if (l.Contains("Graphics Device Name:")) { string r = l.Substring(l.IndexOf(':') + 1); _gpu = Regex.Replace(Regex.Replace(r, @"(?i)(NVIDIA|AMD|GeForce|Radeon|Graphics|\(RADV.*?\)|Direct3D.*)", ""), @"\s+", " ").Trim(); } } } catch { } }
-        private static string GetDistroName() { if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return "Windows"; try { if (File.Exists("/etc/os-release")) { string? n = null, p = null; foreach (var l in File.ReadLines("/etc/os-release")) { if (l.StartsWith("NAME=")) n = l[5..].Trim('"', '\''); if (l.StartsWith("PRETTY_NAME=")) p = l[12..].Trim('"', '\''); } return (n ?? p ?? "Linux").Split(' ')[0]; } } catch { } return "Linux"; }
+        
+        private static string GetDistroName() 
+        { 
+            if (_distroName != null) return _distroName;
+            
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) 
+            { 
+                try 
+                { 
+                    var psi = new ProcessStartInfo("powershell", "-NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Caption\"") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true }; 
+                    using var p = Process.Start(psi); 
+                    string r = p?.StandardOutput.ReadToEnd().Trim() ?? "Windows"; 
+                    if (!string.IsNullOrEmpty(r)) 
+                    { 
+                        if (r.StartsWith("Microsoft ")) r = r.Substring(10); 
+                        _distroName = r.Trim(); 
+                        return _distroName; 
+                    } 
+                } catch { } 
+                _distroName = "Windows"; 
+                return _distroName; 
+            } 
+            
+            try 
+            { 
+                if (File.Exists("/etc/os-release")) 
+                { 
+                    string? n = null, p = null; 
+                    foreach (var l in File.ReadLines("/etc/os-release")) 
+                    { 
+                        if (l.StartsWith("NAME=")) n = l[5..].Trim('"', '\''); 
+                        if (l.StartsWith("PRETTY_NAME=")) p = l[12..].Trim('"', '\''); 
+                    } 
+                    _distroName = (n ?? p ?? "Linux").Split(' ')[0]; 
+                    return _distroName; 
+                } 
+            } catch { } 
+            
+            _distroName = "Linux"; 
+            return _distroName; 
+        }
+
         private static string Stylize(string t) { string n = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", s = "ᵃᵇᶜᵈᵉᶠᵍʰᶦʲᵏˡᵐⁿᵒᵖᵠʳˢᵗᵘᵛʷˣʸᶻᵃᵇᶜᵈᵉᶠᵍʰᶦʲᵏˡᵐⁿᵒᵖᵠʳˢᵗᵘᵛʷˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹"; StringBuilder sb = new(); foreach (char c in t) { int i = n.IndexOf(c); sb.Append(i != -1 ? s[i] : c); } return sb.ToString(); }
         
     }
