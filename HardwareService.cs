@@ -33,6 +33,7 @@ namespace XOSC
         private static IHardware? _cpu;
         private static IHardware? _gpu;
         private static IHardware? _igpu;
+        private static IHardware? _mobo;
         private static IHardware? _ram;
 #endif
 
@@ -56,11 +57,25 @@ namespace XOSC
                 _computer.Open();
                 _computer.Accept(new UpdateVisitor());
                 _cpu  = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu);
+                _mobo = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Motherboard);
+                
                 var gpus = _computer.Hardware.Where(h =>
                     h.HardwareType == HardwareType.GpuNvidia ||
                     h.HardwareType == HardwareType.GpuAmd    ||
                     h.HardwareType == HardwareType.GpuIntel).ToList();
-                string[] igpuKeywords = { "integrated ", "radeon(tm) graphics ", "radeon graphics ", "vega ", "uhd graphics ", "iris xe " };
+
+                string[] igpuKeywords = { 
+                    "integrated", 
+                    "radeon(tm) graphics", 
+                    "radeon graphics", 
+                    "amd radeon graphics",
+                    "vega", 
+                    "uhd graphics", 
+                    "iris xe",
+                    "intel(r) hd",
+                    "intel(r) uhd"
+                };
+
                 _gpu  = gpus.FirstOrDefault(h => !igpuKeywords.Any(k => h.Name.Contains(k, StringComparison.OrdinalIgnoreCase)));
                 if (_gpu == null) _gpu = gpus.FirstOrDefault();
                 _igpu = gpus.FirstOrDefault(h => igpuKeywords.Any(k => h.Name.Contains(k, StringComparison.OrdinalIgnoreCase)));
@@ -94,12 +109,17 @@ namespace XOSC
         {
             if (!_initialized) return;
             _computer.Accept(new UpdateVisitor());
+            
             if (_cpu != null)
             {
                 CpuLoad  = GetHighestSensorValue(_cpu, SensorType.Load,        new[] { "CPU Total", "Total" },                    "--%",  v => $"{v:F0}%",  strict: false);
                 CpuTemp  = GetHighestSensorValue(_cpu, SensorType.Temperature, new[] { "Package", "Core", "Tctl", "Tdie", "CCD" }, "--°C", v => $"{v:F0}°C", strict: false);
+                
                 if (CpuTemp == "--°C" && _igpu != null)
                     CpuTemp = GetHighestSensorValue(_igpu, SensorType.Temperature, new[] { "Core", "Package", "Hot Spot", "Hotspot" }, "--°C", v => $"{v:F0}°C", strict: false);
+                if (CpuTemp == "--°C" && _mobo != null)
+                    CpuTemp = GetHighestSensorValue(_mobo, SensorType.Temperature, new[] { "CPU", "Processor" }, "--°C", v => $"{v:F0}°C", strict: true);
+
                 CpuPower = GetHighestSensorValue(_cpu, SensorType.Power,       new[] { "Package", "Core", "PPT" },                "--W",  v => $"{v:F0}W",  strict: false);
                 if (CpuPower == "--W" && _igpu != null)
                     CpuPower = GetHighestSensorValue(_igpu, SensorType.Power, new[] { "Package", "Core", "Power", "PPT" }, "--W", v => $"{v:F0}W", strict: false);
@@ -110,12 +130,21 @@ namespace XOSC
                 GpuTemp    = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "GPU Core", "Core" },                           "--°C", v => $"{v:F0}°C", strict: false);
                 GpuHotspot = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "Hot spot", "Hotspot", "GPU Hot Spot" },         "--°C", v => $"{v:F0}°C", strict: true);
                 GpuPower   = GetHighestSensorValue(_gpu, SensorType.Power,       new[] { "GPU Power", "Package", "Total Board", "PPT" }, "--W",  v => $"{v:F0}W",  strict: false);
+                
                 float? vramUsed  = GetVramSensorValue(_gpu, new[] { "D3D Dedicated Memory Used",  "Dedicated Memory Used",  "Memory Used"  });
                 float? vramTotal = GetVramSensorValue(_gpu, new[] { "D3D Dedicated Memory Total", "Dedicated Memory Total", "Memory Total" });
+                
                 if (vramUsed.HasValue && vramTotal.HasValue)
                 {
-                    VramUsed  = $"{vramUsed.Value  / 1024f:F1} GB";
-                    VramTotal = $"{vramTotal.Value / 1024f:F1} GB";
+                    float u = vramUsed.Value;
+                    float t = vramTotal.Value;
+                    if (t > 200)
+                    {
+                        u /= 1024f;
+                        t /= 1024f;
+                    }
+                    VramUsed  = $"{u:F1} GB";
+                    VramTotal = $"{t:F1} GB";
                 }
             }
             var memStatus = new NativeMethods.MEMORYSTATUSEX();
