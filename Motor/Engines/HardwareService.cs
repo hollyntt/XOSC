@@ -4,13 +4,15 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security;
 using System.Runtime.InteropServices;
+using XOSC.Motor.Extentions;
 
 #if WINDOWS_BUILD
 using LibreHardwareMonitor.Hardware;
 #endif
 
-namespace XOSC
+namespace XOSC.Motor.Engines
 {
     public static class HardwareService
     {

@@ -1,8 +1,8 @@
-using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 
-namespace XOSC
+namespace XOSC.Motor.Extentions
 {
     public static class NativeMethods
     {

@@ -1,0 +1,129 @@
+﻿using System.Diagnostics;
+using System.IO.Compression;
+using System.Runtime.InteropServices;
+using System.Text.Json;
+
+namespace XOSC.Motor.Extentions;
+
+public static class Updater 
+{ 
+    public static string Status = "idle"; 
+    public static bool NewVersionFound = false; 
+    private static byte[]? _pData; 
+
+    private const string StableApiUrl = "https://api.github.com/repos/hollyntt/XOSC/releases/latest";
+
+    public static async Task CheckForUpdates()
+    {
+        Status = "checking GitHub...";
+        NewVersionFound = false;
+
+        try
+        {
+            using var http = new HttpClient();
+            http.DefaultRequestHeaders.Add("User-Agent", "XOSC-Updater");
+
+            var r = await http.GetStringAsync(StableApiUrl);
+            using var doc = JsonDocument.Parse(r);
+
+            string tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+            string latestVersion = tag.TrimStart('v');
+
+            string localVersion = Program.AppVersion.Split('+')[0];
+
+            if (localVersion == latestVersion)
+            {
+                Status = "already on latest";
+                return;
+            }
+
+            var asset = doc.RootElement
+                .GetProperty("assets")
+                .EnumerateArray()
+                .FirstOrDefault(a => 
+                    a.GetProperty("name").GetString() == "XOSC.zip");
+
+            if (asset.ValueKind == JsonValueKind.Undefined)
+            {
+                Status = "XOSC.zip not found";
+                return;
+            }
+
+            string dUrl = asset.GetProperty("browser_download_url").GetString() ?? "";
+            var z = await http.GetByteArrayAsync(dUrl);
+
+            using var ms = new MemoryStream(z);
+            using var arch = new ZipArchive(ms);
+
+            string platformFolder = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? "win-x64/"
+                : "linux-x64/";
+
+            var entries = arch.Entries
+                .Where(e => e.FullName.StartsWith(platformFolder, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            string[] names = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? new[] { "XOSC.exe" }
+                : new[] { "XOSC" };
+
+            ZipArchiveEntry? entry = null;
+
+            foreach (var name in names)
+            {
+                entry = entries.FirstOrDefault(e =>
+                    Path.GetFileName(e.FullName).Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                if (entry != null)
+                    break;
+            }
+
+            if (entry == null)
+            {
+                Status = "No executable found in update package";
+                return;
+            }
+
+            Status = $"Update found! (v{latestVersion})";
+            NewVersionFound = true;
+
+            using var es = entry.Open();
+            using var msw = new MemoryStream();
+            await es.CopyToAsync(msw);
+            _pData = msw.ToArray();
+        }
+        catch (Exception e)
+        {
+            Status = $"error: {e.Message}";
+        }
+    }
+
+    public static void ApplyUpdate()
+    {
+        if (_pData == null) return;
+
+        try
+        {
+            string self = Environment.ProcessPath!;
+            Program.SaveConfig();
+
+            string bak = self + ".bak";
+            if (File.Exists(bak)) File.Delete(bak);
+
+            File.Move(self, bak, true);
+            File.WriteAllBytes(self, _pData);
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                Process.Start("chmod", $"+x \"{self}\"")?.WaitForExit();
+
+            Thread.Sleep(500);
+            Process.Start(new ProcessStartInfo(self) { UseShellExecute = true });
+
+            Environment.Exit(0);
+        }
+        catch (Exception e)
+        {
+            Status = $"apply error: {e.Message}";
+        }
+    }
+}
