@@ -24,6 +24,7 @@ using rlImGui_cs;
 
 namespace XOSC
 {
+
     public class StatusItem { public string Text { get; set; } = "New Status"; public bool IsFavorited { get; set; } = false; }
     
     public static class ThemePresets
@@ -386,14 +387,8 @@ namespace XOSC
             if ((DateTime.Now - _lastR).TotalSeconds >= cfg.Interval) { _musicData = FetchMusicData(); if (cfg.WeatherMode) { var c = await GetCoordinatesAsync(); await FetchWeatherAsync(c.lat, c.lon); } if (cfg.NetMode) await NetworkStats.UpdateAsync(); _lastR = DateTime.Now; }
             if (cfg.AfkDetectionMode) CheckAfk();
             if ((DateTime.Now - _lastS).TotalSeconds < Math.Max(cfg.Interval, 1.5)) return;
-
-            if (!cfg.WeatherAlertMode && !cfg.EasMode) _activeAlert = string.Empty;
-            bool alertActive = (cfg.EasMode || cfg.WeatherAlertMode) && !string.IsNullOrEmpty(_activeAlert) && DateTime.Now < _alertExpire;
-            if (alertActive && _activeAlert != _lastNotifiedAlert) { _lastNotifiedAlert = _activeAlert; NotifyOS(_activeAlert); }
-
+            if ((cfg.EasMode || cfg.WeatherAlertMode) && !string.IsNullOrEmpty(_activeAlert) && DateTime.Now < _alertExpire) { if (_activeAlert != _lastNotifiedAlert) { _lastNotifiedAlert = _activeAlert; NotifyOS(_activeAlert); } string al = $"⚠️ {_activeAlert}"; if (al.Length > 140) al = al[..140]; if (cfg.ThinMode) al += "\u0003\u001f"; SendOsc("/chatbox/input", al); _lastS = DateTime.Now; PacketsSent++; EngineState = "Alert"; return; }
             var p1 = new List<string>(); bool statusAdded = false; string sText = null;
-            if (alertActive) { string al = $"⚠️ {_activeAlert}"; if (al.Length > 140) al = al[..140]; p1.Add(al); }
-
             lock (ListLock) { if (cfg.StatusTextMode && cfg.StatusList.Count > 0) { if (_statusIdx >= cfg.StatusList.Count) _statusIdx = 0; sText = cfg.StatusList[_statusIdx].Text; p1.Add(_isAfk ? "AFK" : sText); statusAdded = true; } }
             string pr = cfg.Pronouns == "Custom..." ? cfg.CustomPronouns : cfg.Pronouns;
             if (cfg.PronounsMode && !string.IsNullOrEmpty(pr)) p1.Add($"{cfg.StatusIcon} {(cfg.StylizeTextMode ? Stylize(pr) : pr)}");
@@ -416,7 +411,6 @@ namespace XOSC
             var p2 = new List<string>();
             if (cfg.PcMode) {
                 HardwareService.Update();
-                if (alertActive) { string al = $"⚠️ {_activeAlert}"; if (al.Length > 140) al = al[..140]; p2.Add(al); }
                 if (sText != null) p2.Add(_isAfk ? "AFK" : sText);
                 var e2 = new List<string>();
                 if (cfg.TimeMode) { string t2 = DateTime.Now.ToString(cfg.MilitaryTime ? "HH:mm" : "hh:mm tt"); e2.Add($"🕒 {(cfg.StylizeTextMode ? Stylize(t2) : t2)}"); }
@@ -431,7 +425,7 @@ namespace XOSC
                 var mem = new List<string>(); if (cfg.ShowRam) { string ddr = (cfg.RamDdrVersionOn && !string.IsNullOrEmpty(HardwareService.RamDdr)) ? $" ⁽{HardwareService.RamDdr}⁾" : ""; mem.Add($"🐏 {rS}{ddr}: {HardwareService.RamUsed}/{HardwareService.RamTotal}"); } if (cfg.ShowVram) mem.Add($"🎞️ {vS}: {HardwareService.VramUsed}/{HardwareService.VramTotal}"); if (cfg.VrBatteryMode && RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) mem.Add($"🔋 VR: {GetVrBattery()}"); if (mem.Count > 0) p2.Add(string.Join(" | ", mem));
             }
             List<string> active; if (p1.Count > 0 && p2.Count > 0) { _showHardwareTick = !_showHardwareTick; active = _showHardwareTick ? p2 : p1; } else if (p2.Count > 0) { _showHardwareTick = true; active = p2; } else { _showHardwareTick = false; active = p1; }
-            string outStr = string.Join("\n", active); if (cfg.ThinMode) { if (outStr.Length > 138) outStr = outStr[..138]; outStr += "\u0003\u001f"; } SendOsc("/chatbox/input", outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = alertActive ? "Alert" : "Chatting";
+            string outStr = string.Join("\n", active); if (cfg.ThinMode) { if (outStr.Length > 138) outStr = outStr[..138]; outStr += "\u0003\u001f"; } SendOsc("/chatbox/input", outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = "Chatting";
             if (!_showHardwareTick && statusAdded && cfg.AutoCycleStatus) lock (ListLock) _statusIdx = (_statusIdx + 1) % cfg.StatusList.Count;
         }
 
@@ -445,16 +439,20 @@ namespace XOSC
             if (len <= 0) return "";
             if (pos > len) pos = len;
             if (pos < 0) pos = 0;
+    
             int width = 8;
             int filled = (int)Math.Round((pos / len) * width);
             filled = Math.Clamp(filled, 0, width);
+
             StringBuilder sb = new StringBuilder("[");
             for (int i = 0; i < filled; i++) sb.Append("■");
             for (int i = 0; i < (width - filled); i++) sb.Append("□");
             sb.Append("] ");
+    
             var p = TimeSpan.FromSeconds(pos);
             var l = TimeSpan.FromSeconds(len);
             sb.Append($"{(int)p.TotalMinutes}:{p.Seconds:D2}/{(int)l.TotalMinutes}:{l.Seconds:D2}");
+    
             return sb.ToString();
         }
 
@@ -465,6 +463,7 @@ namespace XOSC
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
             try
             {
+                
                 string script = @"Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction SilentlyContinue; [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media, ContentType = WindowsRuntime] | Out-Null; $req = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync(); while($req.Status -eq 0) { Start-Sleep -Milliseconds 10 }; $m = $req.GetResults(); while($true) { try { $s = $m.GetCurrentSession(); if ($s) { $t = $s.GetTimelineProperties(); $p = $s.GetPlaybackInfo(); $propsReq = $s.TryGetMediaPropertiesAsync(); while($propsReq.Status -eq 0) { Start-Sleep -Milliseconds 10 }; $i = $propsReq.GetResults(); $art = $i.Artist; $tit = $i.Title; $name = if ([string]::IsNullOrWhiteSpace($art)) { $tit } else { ""$art - $tit"" }; if ([string]::IsNullOrWhiteSpace($name)) { $name = ""Chilling"" }; $pos = 0; $end = 0; if ($t) { $end = $t.EndTime.TotalSeconds; if ($p -and $p.PlaybackStatus -eq 4) { $diff = ([DateTimeOffset]::Now - $t.LastUpdatedTime).TotalSeconds; $pos = $t.Position.TotalSeconds + $diff; } else { $pos = $t.Position.TotalSeconds; } }; $pos = [math]::Round($pos); $end = [math]::Round($end); if ($end -lt $pos) { $end = $pos }; [Console]::WriteLine(""$name|$pos|$end""); [Console]::Out.Flush(); } else { [Console]::WriteLine(""Chilling|0|0""); [Console]::Out.Flush(); } } catch { [Console]::WriteLine(""Chilling|0|0""); [Console]::Out.Flush(); } Start-Sleep -Seconds 1; }";
                 string b64 = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
                 var psi = new ProcessStartInfo("powershell", $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {b64}") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
@@ -489,6 +488,7 @@ namespace XOSC
                 try { var spot = Process.GetProcessesByName("Spotify"); foreach (var p in spot) { string t = p.MainWindowTitle; if (!string.IsNullOrWhiteSpace(t) && t != "Spotify" && t != "Spotify Premium") return (t, 0, 0); } } catch { }
                 #if WINDOWS_BUILD
                 {
+                    
                     string[] browserNames = { "firefox", "chrome", "msedge", "brave", "opera", "vivaldi", "waterfox", "librewolf", "arc" };
                     var browserPids = new HashSet<int>();
                     foreach (var bn in browserNames)
@@ -503,10 +503,13 @@ namespace XOSC
                         var sb = new StringBuilder(512);
                         if (NativeMethods.GetWindowText(hWnd, sb, 512) > 0) {
                             string t = sb.ToString();
+                            
                             if (t.Contains("- YouTube"))
                                 { found = Regex.Replace(t, @"\s*-\s*YouTube.*", "").Trim(); return false; }
+                            
                             if (t.Contains("- Spotify"))
                                 { found = Regex.Replace(t, @"\s*-\s*Spotify.*", "").Trim(); return false; }
+                            
                             if (t.Contains(" by "))
                                 { found = Regex.Replace(t, @"\s*[—–-]\s*\S.*$", "").Trim(); return false; }
                         }
@@ -517,7 +520,23 @@ namespace XOSC
                 #endif
                 return ("Chilling", 0, 0);
             } else {
-                try { var psi = new ProcessStartInfo("playerctl", "metadata --format \"{{artist}} - {{title}}\"") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true }; using var p = Process.Start(psi); string r = p?.StandardOutput.ReadToEnd().Trim() ?? ""; if (!string.IsNullOrEmpty(r) && r != " - ") { double pos = 0, len = 0; try { var pP = new ProcessStartInfo("playerctl", "position") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true }; using var pp = Process.Start(pP); double.TryParse(pp?.StandardOutput.ReadToEnd().Trim(), out pos); var pL = new ProcessStartInfo("playerctl", "metadata mpris:length") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true }; using var pl = Process.Start(pL); if (long.TryParse(pl?.StandardOutput.ReadToEnd().Trim(), out long lM)) len = lM / 1000000.0; } catch { } return (r, pos, len); } } catch { }
+                try
+                {
+                    var psi = new ProcessStartInfo("playerctl", "metadata --format \"{{artist}} - {{title}}\u001f{{position}}\u001f{{mpris:length}}\"") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+                    using var p = Process.Start(psi);
+                    string raw = p?.StandardOutput.ReadToEnd().Trim() ?? "";
+                    var parts = raw.Split('\u001f');
+                    string r = parts.Length > 0 ? parts[0].Trim() : "";
+                    if (!string.IsNullOrEmpty(r) && r != " - ")
+                    {
+                        double pos = 0, len = 0;
+                        if (parts.Length > 1 && long.TryParse(parts[1].Trim(), out long posUs)) pos = posUs / 1_000_000.0;
+                        if (parts.Length > 2 && long.TryParse(parts[2].Trim(), out long lenUs)) len = lenUs / 1_000_000.0;
+                        return (r, pos, len);
+                    }
+                }
+                catch { }
+                
                 try { var xpsi = new ProcessStartInfo("xdotool", "search --name --onlyvisible .") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true }; using var xp = Process.Start(xpsi); string[] ids = (xp?.StandardOutput.ReadToEnd().Trim() ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries); foreach (var id in ids) { var npsi = new ProcessStartInfo("xdotool", $"getwindowname {id.Trim()}") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true }; using var np = Process.Start(npsi); string xt = np?.StandardOutput.ReadToEnd().Trim() ?? ""; if (xt.Contains("YouTube") || xt.Contains("SoundCloud") || xt.Contains("Spotify")) return (Regex.Replace(xt, @" - (Spotify|YouTube|SoundCloud).*", "").Trim(), 0, 0); } } catch { }
                 return ("Chilling", 0, 0);
             }
@@ -526,6 +545,7 @@ namespace XOSC
         private static void ScrapeHardwareNames() { string log = Program.FindVrcLog(); if (log == null) return; try { using var fs = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); using var sr = new StreamReader(fs); string l; int count = 0; while ((l = sr.ReadLine()) != null && count < 2000) { count++; if (l.Contains("Processor Type:")) { string r = l.Substring(l.IndexOf(':') + 1); _cpu = Regex.Replace(Regex.Replace(r, @"(?i)(AMD|Intel(?:\(R\))?|Core(?:\(TM\))?|Ryzen|\d+-Core|Processor|@.*)", " "), @"\s+", " ").Trim(); } else if (l.Contains("Graphics Device Name:")) { string r = l.Substring(l.IndexOf(':') + 1); _gpu = Regex.Replace(Regex.Replace(r, @"(?i)(NVIDIA|AMD|GeForce|Radeon|Graphics|\(RADV.*?\)|Direct3D.*)", ""), @"\s+", " ").Trim(); } } } catch { } }
         private static string GetDistroName() { if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return "Windows"; try { if (File.Exists("/etc/os-release")) { string? n = null, p = null; foreach (var l in File.ReadLines("/etc/os-release")) { if (l.StartsWith("NAME=")) n = l[5..].Trim('"', '\''); if (l.StartsWith("PRETTY_NAME=")) p = l[12..].Trim('"', '\''); } return (n ?? p ?? "Linux").Split(' ')[0]; } } catch { } return "Linux"; }
         private static string Stylize(string t) { string n = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", s = "ᵃᵇᶜᵈᵉᶠᵍʰᶦʲᵏˡᵐⁿᵒᵖᵠʳˢᵗᵘᵛʷˣʸᶻᵃᵇᶜᵈᵉᶠᵍʰᶦʲᵏˡᵐⁿᵒᵖᵠʳˢᵗᵘᵛʷˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹"; StringBuilder sb = new(); foreach (char c in t) { int i = n.IndexOf(c); sb.Append(i != -1 ? s[i] : c); } return sb.ToString(); }
+        
     }
 
     class Program
@@ -649,21 +669,38 @@ namespace XOSC
 
             Raylib.CloseWindow();
         }
+
 #if WINDOWS_BUILD
+        public static void RelaunchAsAdmin()
+        {
+            try
+            {
+                string exePath = Process.GetCurrentProcess().MainModule!.FileName;
+                Program.SaveConfig();
+                Process.Start(new ProcessStartInfo(exePath)
+                {
+                    UseShellExecute = true,
+                    Verb            = "runas",
+                });
+                Environment.Exit(0);
+            }
+            catch {  }
+        }
+
         private static void CreateStartMenuShortcut()
         {
             try
             {
-                string exePath = Process.GetCurrentProcess().MainModule?.FileName;
-                if (string.IsNullOrEmpty(exePath)) return;
-
+                string exePath   = Process.GetCurrentProcess().MainModule!.FileName;
                 string startMenu = @"C:\ProgramData\Microsoft\Windows\Start Menu\Programs";
-                string lnkPath = Path.Combine(startMenu, "XOSC.lnk");
-                if (File.Exists(lnkPath)) return;
+                string lnkPath   = Path.Combine(startMenu, "XOSC.lnk");
 
-                var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+                if (File.Exists(lnkPath))
+                    return;
+
+                var identity  = System.Security.Principal.WindowsIdentity.GetCurrent();
                 var principal = new System.Security.Principal.WindowsPrincipal(identity);
-                bool isAdmin = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+                bool isAdmin  = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
 
                 if (!isAdmin)
                 {
@@ -672,28 +709,23 @@ namespace XOSC
                         Process.Start(new ProcessStartInfo(exePath)
                         {
                             UseShellExecute = true,
-                            Verb = "runas",
+                            Verb            = "runas",
                         });
-                        Environment.Exit(0);
-                        return;
                     }
-                    catch { return; }
+                    catch {  }
+                    Environment.Exit(0);
+                    return;
                 }
 
                 Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
                 if (shellType == null) return;
-        
-                try
-                {
-                    dynamic shell = Activator.CreateInstance(shellType)!;
-                    dynamic shortcut = shell.CreateShortcut(lnkPath);
-                    shortcut.TargetPath = exePath;
-                    shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
-                    shortcut.Description = "XOSC - VRChat OSC Overlay";
-                    shortcut.IconLocation = $"{exePath},0";
-                    shortcut.Save();
-                }
-                catch { }
+                dynamic shell   = Activator.CreateInstance(shellType)!;
+                dynamic shortcut = shell.CreateShortcut(lnkPath);
+                shortcut.TargetPath       = exePath;
+                shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
+                shortcut.Description      = "XOSC - VRChat OSC Overlay";
+                shortcut.IconLocation     = $"{exePath},0";
+                shortcut.Save();
             }
             catch { }
         }
@@ -702,8 +734,12 @@ namespace XOSC
         public static string FindVrcLog() { if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) { string wP = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AppData", "LocalLow", "VRChat", "VRChat"); if (Directory.Exists(wP)) return Directory.GetFiles(wP, "output_log_*.txt").OrderByDescending(File.GetLastWriteTime).FirstOrDefault(); return null; } string h = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile); string[] s = { Path.Combine(h, ".local/share/Steam"), Path.Combine(h, ".var/app/com.valvesoftware.Steam/.local/share/Steam") }; foreach (var b in s) { if (!Directory.Exists(b)) continue; string v = Path.Combine(b, "steamapps", "libraryfolders.vdf"); List<string> l = new() { b }; if (File.Exists(v)) { var ms = Regex.Matches(File.ReadAllText(v), "\"path\"\\s+\"(.+?)\""); foreach (Match m in ms) l.Add(m.Groups[1].Value.Replace("\\\\", "/")); } foreach (var lib in l) { string p = Path.Combine(lib, "steamapps/compatdata/438100/pfx/drive_c/users/steamuser/AppData/LocalLow/VRChat/VRChat"); if (Directory.Exists(p)) return Directory.GetFiles(p, "output_log_*.txt").OrderByDescending(File.GetLastWriteTime).FirstOrDefault(); } } return null; }
         static void ApplyTheme() { var s = ImGui.GetStyle(); s.WindowRounding = Config.WindowRounding; s.ChildRounding = Config.ChildRounding; s.FrameRounding = Config.FrameRounding; s.PopupRounding = Config.FrameRounding; s.ScrollbarRounding = Config.FrameRounding; s.GrabRounding = Config.FrameRounding; s.TabRounding = Config.TabRounding; s.WindowPadding = new Vector2(12, 12); s.FramePadding = new Vector2(8, 4); s.ItemSpacing = new Vector2(8, 6); ImGui.GetIO().FontGlobalScale = Config.FontScale; ColAccent = V4(Config.AccentColor); ColBg = V4(Config.BgColor); ColSidebar = V4(Config.SidebarColor); ColCard = V4(Config.CardColor); ColText = DeriveText(ColBg); ColSubText = DeriveSubText(ColBg); var colors = ImGui.GetStyle().Colors; var a = ColAccent; var bg = ColBg; var c = ColCard; float b = 0.07f; var frame = new Vector4(Math.Min(c.X+b, 1f), Math.Min(c.Y+b, 1f), Math.Min(c.Z+b, 1f), 1f); var frameH = new Vector4(Math.Min(c.X+b+0.04f, 1f), Math.Min(c.Y+b+0.04f, 1f), Math.Min(c.Z+b+0.04f, 1f), 1f); var frameA = new Vector4(Math.Min(c.X+b+0.08f, 1f), Math.Min(c.Y+b+0.08f, 1f), Math.Min(c.Z+b+0.08f, 1f), 1f); var popup = new Vector4(Math.Min(c.X+0.04f, 1f), Math.Min(c.Y+0.04f, 1f), Math.Min(c.Z+0.06f, 1f), 1f); colors[(int)ImGuiCol.WindowBg] = bg; colors[(int)ImGuiCol.ChildBg] = c; colors[(int)ImGuiCol.PopupBg] = popup; colors[(int)ImGuiCol.MenuBarBg] = c; colors[(int)ImGuiCol.FrameBg] = frame; colors[(int)ImGuiCol.FrameBgHovered] = frameH; colors[(int)ImGuiCol.FrameBgActive] = frameA; colors[(int)ImGuiCol.Button] = new Vector4(a.X, a.Y, a.Z, 0.20f); colors[(int)ImGuiCol.ButtonHovered] = new Vector4(a.X, a.Y, a.Z, 0.40f); colors[(int)ImGuiCol.ButtonActive] = new Vector4(a.X, a.Y, a.Z, 0.65f); colors[(int)ImGuiCol.CheckMark] = a; colors[(int)ImGuiCol.SliderGrab] = a; colors[(int)ImGuiCol.SliderGrabActive] = new Vector4(a.X, a.Y, a.Z, 0.85f); colors[(int)ImGuiCol.ScrollbarBg] = new Vector4(bg.X, bg.Y, bg.Z, 1f); colors[(int)ImGuiCol.ScrollbarGrab] = new Vector4(a.X, a.Y, a.Z, 0.35f); colors[(int)ImGuiCol.ScrollbarGrabHovered] = new Vector4(a.X, a.Y, a.Z, 0.65f); colors[(int)ImGuiCol.ScrollbarGrabActive] = a; colors[(int)ImGuiCol.Header] = new Vector4(a.X, a.Y, a.Z, 0.22f); colors[(int)ImGuiCol.HeaderHovered] = new Vector4(a.X, a.Y, a.Z, 0.38f); colors[(int)ImGuiCol.HeaderActive] = new Vector4(a.X, a.Y, a.Z, 0.55f); colors[(int)ImGuiCol.TitleBg] = c; colors[(int)ImGuiCol.TitleBgActive] = popup; colors[(int)ImGuiCol.TitleBgCollapsed] = c; colors[(int)ImGuiCol.Tab] = c; colors[(int)ImGuiCol.TabHovered] = new Vector4(a.X, a.Y, a.Z, 0.35f); colors[(int)ImGuiCol.TabSelected] = new Vector4(a.X, a.Y, a.Z, 0.25f); colors[(int)ImGuiCol.TabSelectedOverline] = a; colors[(int)ImGuiCol.TabDimmed] = c; colors[(int)ImGuiCol.TabDimmedSelected] = new Vector4(a.X, a.Y, a.Z, 0.14f); colors[(int)ImGuiCol.TabDimmedSelectedOverline] = new Vector4(a.X, a.Y, a.Z, 0.40f); colors[(int)ImGuiCol.Separator] = new Vector4(a.X, a.Y, a.Z, 0.22f); colors[(int)ImGuiCol.SeparatorHovered] = new Vector4(a.X, a.Y, a.Z, 0.55f); colors[(int)ImGuiCol.SeparatorActive] = a; colors[(int)ImGuiCol.ResizeGrip] = new Vector4(a.X, a.Y, a.Z, 0.18f); colors[(int)ImGuiCol.ResizeGripHovered] = new Vector4(a.X, a.Y, a.Z, 0.45f); colors[(int)ImGuiCol.ResizeGripActive] = a; colors[(int)ImGuiCol.Border] = new Vector4(a.X, a.Y, a.Z, 0.18f); colors[(int)ImGuiCol.BorderShadow] = new Vector4(0f, 0f, 0f, 0f); bool lT = (bg.X + bg.Y + bg.Z) / 3f > 0.6f; colors[(int)ImGuiCol.Text] = lT ? new Vector4(0.10f, 0.10f, 0.13f, 1f) : new Vector4(0.92f, 0.92f, 0.95f, 1f); colors[(int)ImGuiCol.TextDisabled] = lT ? new Vector4(0.40f, 0.40f, 0.45f, 1f) : new Vector4(0.50f, 0.50f, 0.55f, 1f); colors[(int)ImGuiCol.TextLink] = a; colors[(int)ImGuiCol.NavCursor] = a; colors[(int)ImGuiCol.DragDropTarget] = a; colors[(int)ImGuiCol.TextSelectedBg] = new Vector4(a.X, a.Y, a.Z, 0.35f); colors[(int)ImGuiCol.NavWindowingHighlight] = new Vector4(a.X, a.Y, a.Z, 0.70f); colors[(int)ImGuiCol.NavWindowingDimBg] = new Vector4(0f, 0f, 0f, 0.45f); colors[(int)ImGuiCol.ModalWindowDimBg] = new Vector4(0f, 0f, 0f, 0.45f); }
 
-        static void DrawUI() { ApplyTheme(); int w = Raylib.GetScreenWidth(), sh = Raylib.GetScreenHeight(); float sw = Config.SidebarWidth; ImGui.SetNextWindowPos(Vector2.Zero); ImGui.SetNextWindowSize(new Vector2(w, sh)); ImGui.Begin("##root", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollbar); string alert = (Config.WeatherAlertMode || Config.EasMode) ? MusicChatEngine.ActiveAlert : ""; if (!string.IsNullOrWhiteSpace(alert) && !(alert == _lastDismissedAlert && _alertDismissed)) { ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.55f, 0.08f, 0.08f, 1f)); ImGui.BeginChild("##alertbanner", new Vector2(w, 30), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.SetCursorPos(new Vector2(10, 6)); ImGui.TextColored(new Vector4(1f, 0.85f, 0.85f, 1f), alert); ImGui.SameLine(w - Config.SidebarWidth - 40); ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.75f, 0.12f, 0.12f, 1f)); ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.90f, 0.18f, 0.18f, 1f)); if (ImGui.Button("X##dismissalert", new Vector2(28, 20))) { _alertDismissed = true; _lastDismissedAlert = alert; } ImGui.PopStyleColor(2); ImGui.EndChild(); ImGui.PopStyleColor(); } ImGui.PushStyleColor(ImGuiCol.ChildBg, ColSidebar); ImGui.BeginChild("##sidebar", new Vector2(sw, sh), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.Dummy(new Vector2(0, 20)); ImGui.SetCursorPosX(20); ImGui.TextColored(ColAccent, "XOSC"); ImGui.SetCursorPosX(20); ImGui.TextColored(ColSubText, $"v{AppVersion}"); ImGui.Dummy(new Vector2(0, 20)); for (int i = 0; i < _navLabels.Length; i++) { bool active = _navPage == i; ImGui.PushStyleColor(ImGuiCol.Button, active ? new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.15f) : Vector4.Zero); ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.08f)); ImGui.PushStyleColor(ImGuiCol.Text, active ? ColAccent : ColText); ImGui.SetCursorPosX(10); if (ImGui.Button(_navLabels[i], new Vector2(sw - 20, 36))) _navPage = i; ImGui.PopStyleColor(3); } ImGui.EndChild(); ImGui.PopStyleColor(); ImGui.SameLine(); ImGui.PushStyleColor(ImGuiCol.ChildBg, ColBg); ImGui.BeginChild("##content", new Vector2(w - sw, sh), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.Dummy(new Vector2(0, 24)); switch (_navPage) { 
-            case 0: Card("Dashboard", () => { Toggle("Enable Chatbox", ref Config.ChatboxEnabled); ImGui.Text($"Engine State: {MusicChatEngine.EngineState}"); ImGui.Text($"Packets Sent: {MusicChatEngine.PacketsSent}"); ImGui.Text($"Weather Alert: {(string.IsNullOrEmpty(MusicChatEngine.ActiveAlert) ? "None" : "ACTIVE")}"); ImGui.Dummy(new Vector2(0, 6)); ImGui.InputText("Manual Message", ref _chatIn, 128); if (ImGui.Button("Send Manual")) { MusicChatEngine.SetManual(_chatIn); _chatIn = ""; } ImGui.Dummy(new Vector2(0, 10)); if (ImGui.InputText("OSC IP", ref Config.OscIP, 64)) SaveConfig(); if (ImGui.InputInt("OSC Port", ref Config.OscPort)) SaveConfig(); }); break; 
+        static void DrawUI() { ApplyTheme(); int w = Raylib.GetScreenWidth(), sh = Raylib.GetScreenHeight(); float sw = Config.SidebarWidth; ImGui.SetNextWindowPos(Vector2.Zero); ImGui.SetNextWindowSize(new Vector2(w, sh)); ImGui.Begin("##root", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollbar); string alert = MusicChatEngine.ActiveAlert; if (!string.IsNullOrWhiteSpace(alert) && !(alert == _lastDismissedAlert && _alertDismissed)) { ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.55f, 0.08f, 0.08f, 1f)); ImGui.BeginChild("##alertbanner", new Vector2(w, 30), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.SetCursorPos(new Vector2(10, 6)); ImGui.TextColored(new Vector4(1f, 0.85f, 0.85f, 1f), alert); ImGui.SameLine(w - Config.SidebarWidth - 40); ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.75f, 0.12f, 0.12f, 1f)); ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.90f, 0.18f, 0.18f, 1f)); if (ImGui.Button("X##dismissalert", new Vector2(28, 20))) { _alertDismissed = true; _lastDismissedAlert = alert; } ImGui.PopStyleColor(2); ImGui.EndChild(); ImGui.PopStyleColor(); } ImGui.PushStyleColor(ImGuiCol.ChildBg, ColSidebar); ImGui.BeginChild("##sidebar", new Vector2(sw, sh), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.Dummy(new Vector2(0, 20)); ImGui.SetCursorPosX(20); ImGui.TextColored(ColAccent, "XOSC"); ImGui.SetCursorPosX(20); ImGui.TextColored(ColSubText, $"v{AppVersion}"); ImGui.Dummy(new Vector2(0, 20)); for (int i = 0; i < _navLabels.Length; i++) { bool active = _navPage == i; ImGui.PushStyleColor(ImGuiCol.Button, active ? new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.15f) : Vector4.Zero); ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.08f)); ImGui.PushStyleColor(ImGuiCol.Text, active ? ColAccent : ColText); ImGui.SetCursorPosX(10); if (ImGui.Button(_navLabels[i], new Vector2(sw - 20, 36))) _navPage = i; ImGui.PopStyleColor(3); } ImGui.EndChild(); ImGui.PopStyleColor(); ImGui.SameLine(); ImGui.PushStyleColor(ImGuiCol.ChildBg, ColBg); ImGui.BeginChild("##content", new Vector2(w - sw, sh), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar); ImGui.Dummy(new Vector2(0, 24)); switch (_navPage) { 
+            case 0: Card("Dashboard", () => { Toggle("Enable Chatbox", ref Config.ChatboxEnabled); ImGui.Text($"Engine State: {MusicChatEngine.EngineState}"); ImGui.Text($"Packets Sent: {MusicChatEngine.PacketsSent}"); ImGui.Text($"Weather Alert: {(string.IsNullOrEmpty(MusicChatEngine.ActiveAlert) ? "None" : "ACTIVE")}");
+#if WINDOWS_BUILD
+                if (!HardwareService.IsElevated) { ImGui.Dummy(new Vector2(0, 6)); ImGui.TextColored(new Vector4(1f, 0.7f, 0.3f, 1f), "Some sensors (CPU temp/power) need admin rights."); if (ImGui.Button("Restart as Administrator")) RelaunchAsAdmin(); }
+#endif
+                ImGui.Dummy(new Vector2(0, 6)); ImGui.InputText("Manual Message", ref _chatIn, 128); if (ImGui.Button("Send Manual")) { MusicChatEngine.SetManual(_chatIn); _chatIn = ""; } ImGui.Dummy(new Vector2(0, 10)); if (ImGui.InputText("OSC IP", ref Config.OscIP, 64)) SaveConfig(); if (ImGui.InputInt("OSC Port", ref Config.OscPort)) SaveConfig(); }); break; 
             case 1: Card("Statuses", () => { lock (MusicChatEngine.ListLock) { for (int i = 0; i < Config.StatusList.Count; i++) { ImGui.PushID(i); var item = Config.StatusList[i]; bool isSelected = _selectedIndices.Contains(i); if (ImGui.Checkbox("##select", ref isSelected)) { if (isSelected) _selectedIndices.Add(i); else _selectedIndices.Remove(i); } ImGui.SameLine(); if (ImGui.Button(item.IsFavorited ? "[*]" : "[ ]", new Vector2(32, 24))) { item.IsFavorited = !item.IsFavorited; Config.StatusList = Config.StatusList.OrderByDescending(s => s.IsFavorited).ToList(); SaveConfig(); ImGui.PopID(); break; } ImGui.SameLine(); if (ImGui.Button("Up", new Vector2(32, 24)) && i > 0) { (Config.StatusList[i], Config.StatusList[i - 1]) = (Config.StatusList[i - 1], Config.StatusList[i]); SaveConfig(); } ImGui.SameLine(); if (ImGui.Button("Dn", new Vector2(32, 24)) && i < Config.StatusList.Count - 1) { (Config.StatusList[i], Config.StatusList[i + 1]) = (Config.StatusList[i + 1], Config.StatusList[i]); SaveConfig(); } ImGui.SameLine(); string statusText = item.Text; if (ImGui.InputText("##s", ref statusText, 100)) { item.Text = statusText; SaveConfig(); } ImGui.PopID(); } } ImGui.Dummy(new Vector2(0, 10)); if (ImGui.Button("+ Add New Status")) Config.StatusList.Add(new StatusItem()); ImGui.SameLine(); if (_selectedIndices.Any() && ImGui.Button("Remove Selected")) { var sorted = _selectedIndices.ToList(); sorted.Sort(); for (int i = sorted.Count - 1; i >= 0; i--) Config.StatusList.RemoveAt(sorted[i]); _selectedIndices.Clear(); SaveConfig(); } }); break; 
             case 2: Card("Chatbox", () => { Toggle("Status Text", ref Config.StatusTextMode); Toggle("Pronouns##Toggle", ref Config.PronounsMode); Toggle("Song Mode", ref Config.SongMode); if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) Toggle("Song Progress Bar", ref Config.SongProgressMode); Toggle("Audio Visualizer", ref Config.AudioVisualizerMode); Toggle("Time", ref Config.TimeMode); Toggle("Military Time", ref Config.MilitaryTime); Toggle("Distro", ref Config.DistroMode); Toggle("Thin Mode", ref Config.ThinMode); Toggle("Auto-Cycle", ref Config.AutoCycleStatus); Toggle("Stylize All Text", ref Config.StylizeTextMode); DrawCombo("Pronouns", _pronounsList, ref Config.Pronouns, ref Config.CustomPronouns); DrawCombo("Country", _countriesList, ref Config.Country, ref Config.CustomCountry); string[] states = _statesMap.ContainsKey(Config.Country) ? _statesMap[Config.Country] : new[] { "Custom..." }; DrawCombo("State", states, ref Config.State, ref Config.CustomState); string[] cities = _citiesMap.ContainsKey(Config.State) ? _citiesMap[Config.State] : new[] { "Custom..." }; DrawCombo("City", cities, ref Config.City, ref Config.CustomCity); ImGui.SliderInt("Interval##slider", ref Config.Interval, 1, 60); }); Card("Weather", () => { Toggle("Enable Weather", ref Config.WeatherMode); Toggle("Show Temperature", ref Config.WeatherTempMode); Toggle("Emergency Alerts", ref Config.WeatherAlertMode); int tempIdx = Array.IndexOf(_tempUnits, Config.WeatherTempUnit); if (tempIdx < 0) tempIdx = 0; if (ImGui.Combo("Temp Unit##tempunit", ref tempIdx, _tempUnits, _tempUnits.Length)) { Config.WeatherTempUnit = _tempUnits[tempIdx]; SaveConfig(); } }); break; 
             case 3: Card("Hardware", () => { Toggle("Show Stats", ref Config.PcMode); Toggle("Show RAM", ref Config.ShowRam); if (Config.ShowRam) { ImGui.Indent(); Toggle("Show DDR Version", ref Config.RamDdrVersionOn); ImGui.Unindent(); } Toggle("Show VRAM", ref Config.ShowVram); if(RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) Toggle("VR Headset Battery", ref Config.VrBatteryMode); Toggle("Stylized Names", ref Config.HwNameMode); ImGui.Separator(); ImGui.Text("Sensors"); Toggle("CPU Temp", ref Config.CpuTempOn); Toggle("CPU Power (Wattage)", ref Config.CpuPowerOn); Toggle("GPU Temp", ref Config.GpuTempOn); Toggle("GPU Hotspot Temp", ref Config.GpuHotspotOn); Toggle("GPU Power (Wattage)", ref Config.GpuPowerOn); ImGui.Separator(); ImGui.Text("Custom Names"); Toggle("Custom CPU Name", ref Config.CustomCpuNameOn); if (Config.CustomCpuNameOn) ImGui.InputText("##c_cpu", ref Config.CustomCpuName, 32); Toggle("Custom GPU Name", ref Config.CustomGpuNameOn); if (Config.CustomGpuNameOn) ImGui.InputText("##c_gpu", ref Config.CustomGpuName, 32); }); break; 
@@ -723,24 +759,39 @@ namespace XOSC
                 var dir = Path.GetDirectoryName(_path);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     Directory.CreateDirectory(dir);
+                    
                 var options = new JsonSerializerOptions { WriteIndented = true, IncludeFields = true };
                 File.WriteAllText(_path, JsonSerializer.Serialize(Config, options));
+                Console.WriteLine($"[Config] Saved to {_path}");
             } 
-            catch { } 
+            catch (Exception ex) 
+            { 
+                Console.WriteLine($"[Config Save Error]: {ex.Message}");
+                Console.WriteLine($"[Config Path]: {_path}");
+            } 
         }
 
         static void LoadConfig() 
         { 
             if (!File.Exists(_path)) return; 
+    
             try 
             { 
                 var rawJson = File.ReadAllText(_path); 
-                var options = new JsonSerializerOptions { IncludeFields = true, Converters = { new StatusItemConverter() } };
+
+                var options = new JsonSerializerOptions { 
+                    IncludeFields = true, 
+                    Converters = { new StatusItemConverter() } 
+                };
+
                 var jsonNode = System.Text.Json.Nodes.JsonNode.Parse(rawJson); 
+
                 if (jsonNode["StatusList"] is System.Text.Json.Nodes.JsonArray sL && sL.All(n => n is System.Text.Json.Nodes.JsonValue)) 
                 { 
                     var sLL = JsonSerializer.Deserialize<List<string>>(sL.ToJsonString()); 
+
                     var tC = JsonSerializer.Deserialize<AppConfig>(rawJson, options); 
+            
                     if (tC != null && sLL != null) 
                     { 
                         tC.StatusList = sLL.Select(s => new StatusItem { Text = s }).ToList(); 
@@ -749,10 +800,16 @@ namespace XOSC
                         return; 
                     } 
                 } 
+
                 var loaded = JsonSerializer.Deserialize<AppConfig>(rawJson, options); 
                 if (loaded != null) Config = loaded; 
+        
             } 
-            catch { } 
+            catch (Exception ex) 
+            { 
+                
+                Console.WriteLine($"[Config Load Error]: {ex.Message}");
+            } 
         }
     }
     public class StatusItemConverter : JsonConverter<List<StatusItem>> { public override List<StatusItem> Read(ref Utf8JsonReader r, Type t, JsonSerializerOptions o) { if (r.TokenType == JsonTokenType.StartArray) { var l = new List<StatusItem>(); while (r.Read() && r.TokenType != JsonTokenType.EndArray) { if (r.TokenType == JsonTokenType.String) l.Add(new StatusItem { Text = r.GetString() }); else if (r.TokenType == JsonTokenType.StartObject) l.Add(JsonSerializer.Deserialize<StatusItem>(ref r, o)); } return l; } return new List<StatusItem>(); } public override void Write(Utf8JsonWriter w, List<StatusItem> v, JsonSerializerOptions o) => JsonSerializer.Serialize(w, v, o); }

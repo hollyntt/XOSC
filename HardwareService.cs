@@ -26,6 +26,7 @@ namespace XOSC
         public static string GpuTemp    { get; private set; } = "--°C";
         public static string GpuHotspot { get; private set; } = "--°C";
         public static string GpuPower   { get; private set; } = "--W";
+        public static bool   IsElevated { get; private set; }
 #if WINDOWS_BUILD
         private static Computer _computer = null!;
         private static bool _initialized;
@@ -41,6 +42,9 @@ namespace XOSC
             if (_initialized) return;
             try
             {
+                var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+                var principal = new System.Security.Principal.WindowsPrincipal(identity);
+                IsElevated = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
                 _computer = new Computer
                 {
                     IsCpuEnabled         = true,
@@ -102,12 +106,12 @@ namespace XOSC
             }
             if (_gpu != null)
             {
-                GpuLoad    = GetHighestSensorValue(_gpu, SensorType.Load,        new[] { "3D", "Core" },                                 "--% ", v => $"{v:F0}%",  strict: true);
-                GpuTemp    = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "GPU Core", "Core" },                           "--°C ", v => $"{v:F0}°C", strict: false);
-                GpuHotspot = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "Hot spot", "Hotspot" },                        "--°C ", v => $"{v:F0}°C", strict: true);
-                GpuPower   = GetHighestSensorValue(_gpu, SensorType.Power,       new[] { "GPU Power", "Package", "Total Board", "PPT" }, "--W ",  v => $"{v:F0}W",  strict: false);
-                float? vramUsed  = GetVramSensorValue(_gpu, new[] { "Dedicated Memory Used",  "Memory Used"  });
-                float? vramTotal = GetVramSensorValue(_gpu, new[] { "Dedicated Memory Total", "Memory Total" });
+                GpuLoad    = GetHighestSensorValue(_gpu, SensorType.Load,        new[] { "D3D 3D", "GPU Core", "3D", "Core" },          "--%",  v => $"{v:F0}%",  strict: false);
+                GpuTemp    = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "GPU Core", "Core" },                           "--°C", v => $"{v:F0}°C", strict: false);
+                GpuHotspot = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "Hot spot", "Hotspot", "GPU Hot Spot" },         "--°C", v => $"{v:F0}°C", strict: true);
+                GpuPower   = GetHighestSensorValue(_gpu, SensorType.Power,       new[] { "GPU Power", "Package", "Total Board", "PPT" }, "--W",  v => $"{v:F0}W",  strict: false);
+                float? vramUsed  = GetVramSensorValue(_gpu, new[] { "D3D Dedicated Memory Used",  "Dedicated Memory Used",  "Memory Used"  });
+                float? vramTotal = GetVramSensorValue(_gpu, new[] { "D3D Dedicated Memory Total", "Dedicated Memory Total", "Memory Total" });
                 if (vramUsed.HasValue && vramTotal.HasValue)
                 {
                     VramUsed  = $"{vramUsed.Value  / 1024f:F1} GB";
@@ -166,7 +170,7 @@ namespace XOSC
                 var s = allSensors.FirstOrDefault(x => (x.SensorType == SensorType.Data || x.SensorType == SensorType.SmallData) && x.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && x.Value.HasValue);
                 if (s != null) return s.Value!.Value;
             }
-            var fb = allSensors.FirstOrDefault(s => (s.SensorType == SensorType.Data || s.SensorType == SensorType.SmallData) && (s.Name.Contains("GPU Memory Total", StringComparison.OrdinalIgnoreCase) || s.Name.Contains("Memory Total", StringComparison.OrdinalIgnoreCase)) && s.Value.HasValue);
+            var fb = allSensors.FirstOrDefault(s => (s.SensorType == SensorType.Data || s.SensorType == SensorType.SmallData) && !s.Name.Contains("Shared", StringComparison.OrdinalIgnoreCase) && (s.Name.Contains("GPU Memory Total", StringComparison.OrdinalIgnoreCase) || s.Name.Contains("Memory Total", StringComparison.OrdinalIgnoreCase)) && s.Value.HasValue);
             return fb?.Value;
         }
 
