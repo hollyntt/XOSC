@@ -85,10 +85,44 @@ public static class MusicChatEngine
     private static (string Title, double Position, double Length) FetchMusicData()
     {
 #if WINDOWS_BUILD
-        if (_mediaManager?.GetFocusedSession() != null) return _musicData;
+        if (_mediaManager != null) {
+            var sessions = _mediaManager.CurrentMediaSessions;
+            if (sessions.Count > 0) {
+                foreach (var session in sessions.Values) {
+                    var props = session.ControlSession.TryGetMediaPropertiesAsync().GetAwaiter().GetResult();
+                    if (!string.IsNullOrWhiteSpace(props.Title)) return _musicData;
+                }
+            }
+        }
 #endif
-        try { var processes = Process.GetProcesses(); foreach(var p in processes) { if(p.ProcessName.Contains("soundcloud", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(p.MainWindowTitle)) return (p.MainWindowTitle, 0, 0); } } catch { }
-        try { var spot = Process.GetProcessesByName("Spotify"); foreach (var p in spot) { string t = p.MainWindowTitle; if (!string.IsNullOrWhiteSpace(t) && t != "Spotify" && t != "Spotify Premium") return (t, 0, 0); } } catch { }
+        try
+        {
+            var processes = Process.GetProcesses();
+            foreach (var p in processes)
+            {
+                if (p.ProcessName.Contains("soundcloud",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(p.MainWindowTitle))
+                    return (p.MainWindowTitle, 0, 0);
+            }
+        }
+        catch
+        {
+        }
+        
+        try
+        {
+            var spot = Process.GetProcessesByName("Spotify");
+            foreach (var p in spot)
+            {
+                string t = p.MainWindowTitle;
+                if (!string.IsNullOrWhiteSpace(t) && t != "Spotify" && t != "Spotify Premium")
+                    return (t, 0, 0);
+            }
+        }
+        catch
+        {
+        }
         return ("Chilling", 0, 0);
     }
 
