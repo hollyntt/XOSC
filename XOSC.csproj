@@ -14,7 +14,6 @@
         <Description>Manage and unfriend VRChat friends</Description>
     </PropertyGroup>
 
-    <!-- WINDOWS_BUILD is defined on Windows so #if guards in NativeMethods.cs and HardwareService.cs work -->
     <PropertyGroup Condition="$([MSBuild]::IsOsPlatform('Windows'))">
         <DefineConstants>$(DefineConstants);WINDOWS_BUILD</DefineConstants>
         <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework><TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
