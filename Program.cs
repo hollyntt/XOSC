@@ -12,9 +12,6 @@ using XOSC.Motor.Engines;
 using XOSC.Motor.Extentions;
 using XOSC.Motor.UI;
 
-/* Sorry the build failed so i had to comment in something
- Edit: FUCKER?????? WHY IS THERE ALREADY A TAG LMAOOO */
-
 namespace XOSC
 {
     class Program
