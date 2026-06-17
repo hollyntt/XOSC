@@ -2,7 +2,7 @@
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>net9.0</TargetFramework>
+        <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -17,6 +17,7 @@
     <!-- WINDOWS_BUILD is defined on Windows so #if guards in NativeMethods.cs and HardwareService.cs work -->
     <PropertyGroup Condition="$([MSBuild]::IsOsPlatform('Windows'))">
         <DefineConstants>$(DefineConstants);WINDOWS_BUILD</DefineConstants>
+        <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework><TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
     </PropertyGroup>
 
     <ItemGroup>
@@ -32,6 +33,7 @@
     <!-- LibreHardwareMonitor is Windows-only — must not be restored on Linux -->
     <ItemGroup Condition="$([MSBuild]::IsOsPlatform('Windows'))">
         <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+        <PackageReference Include="Dubya.WindowsMediaController" Version="2.5.6" />
     </ItemGroup>
 
     <ItemGroup>
