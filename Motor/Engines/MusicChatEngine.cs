@@ -17,7 +17,7 @@ public static class MusicChatEngine
     private static bool _showHardwareTick = false;
     private static string _cpu = "CPU", _gpu = "GPU";
     private static string _distroName = null;
-    private static bool _isAfk = false;
+
     private static DateTime _lastWeatherFetch = DateTime.MinValue;
     private static int _weatherCode = 0;
     private static double _weatherTempC = 0;
@@ -135,7 +135,7 @@ public static class MusicChatEngine
         var cfg = Program.Config;
         if (DateTime.Now < _manualE) { EngineState = "Manual"; SendOsc("/chatbox/input", $"💬 {_manualM}"); return; }
         if ((DateTime.Now - _lastR).TotalSeconds >= cfg.Interval) { _musicData = FetchMusicData(); if (cfg.WeatherMode) { var c = await GetCoordinatesAsync(); await FetchWeatherAsync(c.lat, c.lon); } if (cfg.NetMode) await NetworkStats.UpdateAsync(); _lastR = DateTime.Now; }
-        if (cfg.AfkDetectionMode) CheckAfk();
+        if (cfg.AfkDetectionMode) AfkEngine.Update();
         if ((DateTime.Now - _lastS).TotalSeconds < Math.Max(cfg.Interval, 1.5)) return;
 
         if (!cfg.WeatherAlertMode && !cfg.EasMode) _activeAlert = string.Empty;
@@ -145,7 +145,8 @@ public static class MusicChatEngine
         var p1 = new List<string>(); bool statusAdded = false; string sText = null;
         if (alertActive) { string al = $"⚠️ {_activeAlert}"; if (al.Length > 140) al = al[..140]; p1.Add(al); }
 
-        lock (ListLock) { if (cfg.StatusTextMode && cfg.StatusList.Count > 0) { if (_statusIdx >= cfg.StatusList.Count) _statusIdx = 0; sText = cfg.StatusList[_statusIdx].Text; p1.Add(_isAfk ? "AFK" : sText); statusAdded = true; } }
+        if (cfg.AfkDetectionMode && AfkEngine.IsAfk) { string afkStr = string.IsNullOrEmpty(AfkEngine.AfkDuration) ? "💤 AFK" : $"💤 AFK {AfkEngine.AfkDuration}"; p1.Add(afkStr); }
+        lock (ListLock) { if (cfg.StatusTextMode && cfg.StatusList.Count > 0) { if (_statusIdx >= cfg.StatusList.Count) _statusIdx = 0; sText = cfg.StatusList[_statusIdx].Text; p1.Add(AfkEngine.IsAfk ? "AFK" : sText); statusAdded = true; } }
         string pr = cfg.Pronouns == "Custom..." ? cfg.CustomPronouns : cfg.Pronouns;
         if (cfg.PronounsMode && !string.IsNullOrEmpty(pr)) p1.Add($"{cfg.StatusIcon} {(cfg.StylizeTextMode ? Stylize(pr) : pr)}");
         var e1 = new List<string>();
@@ -168,7 +169,7 @@ public static class MusicChatEngine
         if (cfg.PcMode) {
             HardwareService.Update();
             if (alertActive) { string al = $"⚠️ {_activeAlert}"; if (al.Length > 140) al = al[..140]; p2.Add(al); }
-            if (sText != null) p2.Add(_isAfk ? "AFK" : sText);
+            if (sText != null) p2.Add(AfkEngine.IsAfk ? "AFK" : sText);
             var e2 = new List<string>();
             if (cfg.TimeMode) { string t2 = DateTime.Now.ToString(cfg.MilitaryTime ? "HH:mm" : "hh:mm tt"); e2.Add($"🕒 {(cfg.StylizeTextMode ? Stylize(t2) : t2)}"); }
             if (cfg.DistroMode) { string dn2 = GetDistroName(); e2.Add(cfg.StylizeTextMode ? Stylize(dn2) : dn2); }
@@ -199,7 +200,7 @@ public static class MusicChatEngine
     public static void NotifyOS(string txt) { string s = txt.Replace("'", "").Replace("\"", "").Replace("\n", " "); if (s.Length > 200) s = s[..200] + "..."; try { if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) { string ps = "Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Warning; $n.Visible = $true; $n.ShowBalloonTip(8000, 'XOSC Alert', '" + s + "', [System.Windows.Forms.ToolTipIcon]::Warning); Start-Sleep -Seconds 9; $n.Visible = $false"; Process.Start(new ProcessStartInfo("powershell", "-NoProfile -WindowStyle Hidden -Command \"" + ps + "\"") { CreateNoWindow = true, UseShellExecute = false }); } else Process.Start(new ProcessStartInfo("notify-send", "--urgency=critical \"XOSC Alert\" \"" + s + "\"") { UseShellExecute = false, CreateNoWindow = true }); } catch { } }
     private static void SendOsc(string addr, string txt) { try { List<byte> p = new(); void Add(string s) { byte[] b = Encoding.UTF8.GetBytes(s); p.AddRange(b); p.Add(0); while (p.Count % 4 != 0) p.Add(0); } Add(addr); Add(addr == "/chatbox/input" ? ",sTF" : ",s"); Add(txt); var ip = Program.Config.OscIP.Trim(); var pt = Program.Config.OscPort; if (string.IsNullOrEmpty(ip)) return; lock (_clientLock) { _client.Send(p.ToArray(), p.Count, ip, pt); } } catch (Exception) { lock (_clientLock) { try { _client.Close(); } catch { } _client = new UdpClient(); } } }
     private static string GetVrBattery() { try { var psi = new ProcessStartInfo("powershell", "-Command \"if (Get-Process vrserver -ErrorAction SilentlyContinue) { '85%' } else { '0%' }\"") { RedirectStandardOutput = true, CreateNoWindow = true, UseShellExecute = false }; using var p = Process.Start(psi); return p?.StandardOutput.ReadToEnd().Trim() ?? "0%"; } catch { return "0%"; } }
-    private static void CheckAfk() { string log = Program.FindVrcLog(); if (log == null) return; try { using var fs = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); using var sr = new StreamReader(fs); string l, last = ""; while ((l = sr.ReadLine()) != null) last = l; if (last.Contains("OnPlayerResting")) _isAfk = true; else if (last.Contains("OnPlayerActive")) _isAfk = false; } catch { } }
+
 
     private static string MakeProgressBar(double pos, double len)
     {

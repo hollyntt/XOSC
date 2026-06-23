@@ -30,6 +30,7 @@ public class AppConfig
         public bool SongProgressMode = false;
         public bool AudioVisualizerMode = false;
         public bool AfkDetectionMode = false;
+        public int AfkTimeout = 300;
         public bool VrBatteryMode = false;
         public bool EasMode = false;
         public bool NetMode = false;

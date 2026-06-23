@@ -13,6 +13,14 @@ public static class Updater
 
     private const string StableApiUrl = "https://api.github.com/repos/hollyntt/XOSC/releases/latest";
 
+    private static string GetSelfPath()
+    {
+        string? appImage = Environment.GetEnvironmentVariable("APPIMAGE");
+        if (!string.IsNullOrEmpty(appImage) && File.Exists(appImage))
+            return appImage;
+        return Environment.ProcessPath!;
+    }
+
     public static async Task CheckForUpdates()
     {
         Status = "checking GitHub...";
@@ -37,60 +45,75 @@ public static class Updater
                 return;
             }
 
+            bool isAppImage = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("APPIMAGE"));
+
             var asset = doc.RootElement
                 .GetProperty("assets")
                 .EnumerateArray()
-                .FirstOrDefault(a => 
-                    a.GetProperty("name").GetString() == "XOSC.zip");
+                .FirstOrDefault(a =>
+                {
+                    string name = a.GetProperty("name").GetString() ?? "";
+                    if (isAppImage) return name == "XOSC-x86_64.AppImage";
+                    return name == "XOSC.zip";
+                });
 
             if (asset.ValueKind == JsonValueKind.Undefined)
             {
-                Status = "XOSC.zip not found";
+                Status = isAppImage ? "AppImage not found in release" : "XOSC.zip not found";
                 return;
             }
 
             string dUrl = asset.GetProperty("browser_download_url").GetString() ?? "";
-            var z = await http.GetByteArrayAsync(dUrl);
 
-            using var ms = new MemoryStream(z);
-            using var arch = new ZipArchive(ms);
-
-            string platformFolder = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? "win-x64/"
-                : "linux-x64/";
-
-            var entries = arch.Entries
-                .Where(e => e.FullName.StartsWith(platformFolder, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            string[] names = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? new[] { "XOSC.exe" }
-                : new[] { "XOSC" };
-
-            ZipArchiveEntry? entry = null;
-
-            foreach (var name in names)
+            if (isAppImage)
             {
-                entry = entries.FirstOrDefault(e =>
-                    Path.GetFileName(e.FullName).Equals(name, StringComparison.OrdinalIgnoreCase));
-
-                if (entry != null)
-                    break;
+                var bytes = await http.GetByteArrayAsync(dUrl);
+                _pData = bytes;
             }
-
-            if (entry == null)
+            else
             {
-                Status = "No executable found in update package";
-                return;
+                var z = await http.GetByteArrayAsync(dUrl);
+
+                using var ms = new MemoryStream(z);
+                using var arch = new ZipArchive(ms);
+
+                string platformFolder = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                    ? "win-x64/"
+                    : "linux-x64/";
+
+                var entries = arch.Entries
+                    .Where(e => e.FullName.StartsWith(platformFolder, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                string[] names = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                    ? new[] { "XOSC.exe" }
+                    : new[] { "XOSC" };
+
+                ZipArchiveEntry? entry = null;
+
+                foreach (var name in names)
+                {
+                    entry = entries.FirstOrDefault(e =>
+                        Path.GetFileName(e.FullName).Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                    if (entry != null)
+                        break;
+                }
+
+                if (entry == null)
+                {
+                    Status = "No executable found in update package";
+                    return;
+                }
+
+                using var es = entry.Open();
+                using var msw = new MemoryStream();
+                await es.CopyToAsync(msw);
+                _pData = msw.ToArray();
             }
 
             Status = $"Update found! (v{latestVersion})";
             NewVersionFound = true;
-
-            using var es = entry.Open();
-            using var msw = new MemoryStream();
-            await es.CopyToAsync(msw);
-            _pData = msw.ToArray();
         }
         catch (Exception e)
         {
@@ -104,7 +127,7 @@ public static class Updater
 
         try
         {
-            string self = Environment.ProcessPath!;
+            string self = GetSelfPath();
             Program.SaveConfig();
 
             string bak = self + ".bak";

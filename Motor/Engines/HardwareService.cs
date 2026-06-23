@@ -107,31 +107,50 @@ namespace XOSC.Motor.Engines
         }
 
 #if WINDOWS_BUILD
+        private static void CollectSensors(IHardware hw, List<ISensor> result)
+        {
+            result.AddRange(hw.Sensors);
+            foreach (var sub in hw.SubHardware) CollectSensors(sub, result);
+        }
+
+        private static string GetFirstSensorValue(IHardware hw, SensorType type, string[] namePriority, string fallback, Func<float, string> fmt)
+        {
+            if (hw == null) return fallback;
+            var allSensors = new List<ISensor>();
+            CollectSensors(hw, allSensors);
+            var typed = allSensors.Where(s => s.SensorType == type && s.Value.HasValue && s.Value.Value > 0).ToList();
+            foreach (var name in namePriority)
+            {
+                var match = typed.FirstOrDefault(s => s.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+                if (match != null) return fmt(match.Value!.Value);
+            }
+            return fallback;
+        }
+
         private static void UpdateWindows()
         {
             if (!_initialized) return;
-            _computer.Accept(new UpdateVisitor());
-            
+
             if (_cpu != null)
             {
-                CpuLoad  = GetHighestSensorValue(_cpu, SensorType.Load,        new[] { "CPU Total", "Total" },                    "--%",  v => $"{v:F0}%",  strict: false);
-                CpuTemp  = GetHighestSensorValue(_cpu, SensorType.Temperature, new[] { "Package", "Core", "Tctl", "Tdie", "CCD" }, "--°C", v => $"{v:F0}°C", strict: false);
-                
-                if (CpuTemp == "--°C" && _igpu != null)
-                    CpuTemp = GetHighestSensorValue(_igpu, SensorType.Temperature, new[] { "Core", "Package", "Hot Spot", "Hotspot" }, "--°C", v => $"{v:F0}°C", strict: false);
-                if (CpuTemp == "--°C" && _mobo != null)
-                    CpuTemp = GetHighestSensorValue(_mobo, SensorType.Temperature, new[] { "CPU", "Processor" }, "--°C", v => $"{v:F0}°C", strict: true);
+                _cpu.Update();
+                CpuLoad  = GetFirstSensorValue(_cpu, SensorType.Load,        new[] { "CPU Total", "Total" },                                      "--%",  v => $"{v:F0}%");
+                CpuTemp  = GetFirstSensorValue(_cpu, SensorType.Temperature, new[] { "Package", "Core (Tctl/Tdie)", "Tctl", "Tdie", "CCD" },      "--°C", v => $"{v:F0}°C");
+                CpuPower = GetFirstSensorValue(_cpu, SensorType.Power,       new[] { "Package", "CPU PPT", "Total Power", "Core Power", "Core" }, "--W",  v => $"{v:F0}W");
 
-                CpuPower = GetHighestSensorValue(_cpu, SensorType.Power,       new[] { "Package", "Core", "PPT" },                "--W",  v => $"{v:F0}W",  strict: false);
-                if (CpuPower == "--W" && _igpu != null)
-                    CpuPower = GetHighestSensorValue(_igpu, SensorType.Power, new[] { "Package", "Core", "Power", "PPT" }, "--W", v => $"{v:F0}W", strict: false);
+                if (CpuTemp == "--°C" && _mobo != null)
+                {
+                    _mobo.Update();
+                    CpuTemp = GetFirstSensorValue(_mobo, SensorType.Temperature, new[] { "CPU", "Processor" }, "--°C", v => $"{v:F0}°C");
+                }
             }
             if (_gpu != null)
             {
-                GpuLoad    = GetHighestSensorValue(_gpu, SensorType.Load,        new[] { "D3D 3D", "GPU Core", "3D", "Core" },          "--%",  v => $"{v:F0}%",  strict: false);
-                GpuTemp    = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "GPU Core", "Core" },                           "--°C", v => $"{v:F0}°C", strict: false);
-                GpuHotspot = GetHighestSensorValue(_gpu, SensorType.Temperature, new[] { "Hot spot", "Hotspot", "GPU Hot Spot" },         "--°C", v => $"{v:F0}°C", strict: true);
-                GpuPower   = GetHighestSensorValue(_gpu, SensorType.Power,       new[] { "GPU Power", "Package", "Total Board", "PPT" }, "--W",  v => $"{v:F0}W",  strict: false);
+                _gpu.Update();
+                GpuLoad    = GetFirstSensorValue(_gpu, SensorType.Load,        new[] { "D3D 3D", "GPU Core", "3D", "Core" },           "--%",  v => $"{v:F0}%");
+                GpuTemp    = GetFirstSensorValue(_gpu, SensorType.Temperature, new[] { "GPU Core", "Core" },                            "--°C", v => $"{v:F0}°C");
+                GpuHotspot = GetFirstSensorValue(_gpu, SensorType.Temperature, new[] { "Hot spot", "Hotspot", "GPU Hot Spot" },         "--°C", v => $"{v:F0}°C");
+                GpuPower   = GetFirstSensorValue(_gpu, SensorType.Power,       new[] { "GPU Power", "Package", "Total Board", "PPT" }, "--W",  v => $"{v:F0}W");
                 
                 float? vramUsed  = GetVramSensorValue(_gpu, new[] { "D3D Dedicated Memory Used",  "Dedicated Memory Used",  "Memory Used"  });
                 float? vramTotal = GetVramSensorValue(_gpu, new[] { "D3D Dedicated Memory Total", "Dedicated Memory Total", "Memory Total" });
@@ -149,6 +168,7 @@ namespace XOSC.Motor.Engines
                     VramTotal = $"{t:F1} GB";
                 }
             }
+            if (_ram != null) _ram.Update();
             var memStatus = new NativeMethods.MEMORYSTATUSEX();
             memStatus.dwLength = (uint)Marshal.SizeOf(memStatus);
             if (NativeMethods.GlobalMemoryStatusEx(ref memStatus))
@@ -176,8 +196,8 @@ namespace XOSC.Motor.Engines
         private static string GetHighestSensorValue(IHardware hw, SensorType type, string[] nameParts, string fallback, Func<float, string> fmt, bool strict = false)
         {
             if (hw == null) return fallback;
-            var allSensors = new List<ISensor>(hw.Sensors);
-            foreach (var sub in hw.SubHardware) allSensors.AddRange(sub.Sensors);
+            var allSensors = new List<ISensor>();
+            CollectSensors(hw, allSensors);
             var sensors = allSensors.Where(x => x.SensorType == type).ToList();
             if (nameParts?.Length > 0)
             {
@@ -194,8 +214,8 @@ namespace XOSC.Motor.Engines
         private static float? GetVramSensorValue(IHardware hw, string[] priorityNames)
         {
             if (hw == null) return null;
-            var allSensors = new List<ISensor>(hw.Sensors);
-            foreach (var sub in hw.SubHardware) allSensors.AddRange(sub.Sensors);
+            var allSensors = new List<ISensor>();
+            CollectSensors(hw, allSensors);
             foreach (var name in priorityNames)
             {
                 var s = allSensors.FirstOrDefault(x => (x.SensorType == SensorType.Data || x.SensorType == SensorType.SmallData) && x.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && x.Value.HasValue);
