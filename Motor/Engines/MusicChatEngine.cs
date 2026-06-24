@@ -231,11 +231,31 @@ public static class MusicChatEngine
         { 
             try 
             { 
-                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
-                _distroName = key?.GetValue("ProductName")?.ToString() ?? "Windows";
-                return _distroName;
+                var psi = new ProcessStartInfo("powershell", "-NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Caption\"")
+                {
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                string? caption = proc?.StandardOutput.ReadToEnd().Trim();
+                if (!string.IsNullOrWhiteSpace(caption))
+                {
+                    _distroName = caption;
+                    return _distroName;
+                }
+                throw new Exception("empty caption");
             } 
-            catch { _distroName = "Windows"; return _distroName; } 
+            catch 
+            { 
+                try 
+                { 
+                    using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+                    _distroName = key?.GetValue("ProductName")?.ToString() ?? "Windows";
+                } 
+                catch { _distroName = "Windows"; } 
+                return _distroName; 
+            } 
         } 
         try 
         { 
@@ -254,6 +274,7 @@ public static class MusicChatEngine
         _distroName = "Linux"; 
         return _distroName; 
     }
+
 
     private static string Stylize(string t) { string n = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", s = "ᵃᵇᶜᵈᵉᶠᵍʰᶦʲᵏˡᵐⁿᵒᵖᵠʳˢᵗᵘᵛʷˣʸᶻᵃᵇᶜᵈᵉᶠᵍʰᶦʲᵏˡᵐⁿᵒᵖᵠʳˢᵗᵘᵛʷˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹"; StringBuilder sb = new(); foreach (char c in t) { int i = n.IndexOf(c); sb.Append(i != -1 ? s[i] : c); } return sb.ToString(); }
 }

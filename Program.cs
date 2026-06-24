@@ -83,6 +83,8 @@ namespace XOSC
             Raylib.SetConfigFlags(ConfigFlags.ResizableWindow);
 
             Raylib.InitWindow(1280, 720, "XOSC");
+            
+            Raylib.SetExitKey(KeyboardKey.Null); // fuck you raylib
 
             try
             {
