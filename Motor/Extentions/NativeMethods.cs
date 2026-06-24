@@ -57,6 +57,32 @@ namespace XOSC.Motor.Extentions
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        // UIPI bypass to fix that danm admin issue that i hate
+        public const uint MSGFLT_ALLOW = 1;
+        public const uint WM_MOUSEMOVE = 0x0200;
+        public const uint WM_LBUTTONDOWN = 0x0201;
+        public const uint WM_LBUTTONUP = 0x0202;
+        public const uint WM_RBUTTONDOWN = 0x0204;
+        public const uint WM_RBUTTONUP = 0x0205;
+        public const uint WM_MBUTTONDOWN = 0x0207;
+        public const uint WM_MBUTTONUP = 0x0208;
+        public const uint WM_MOUSEWHEEL = 0x020A;
+        public const uint WM_MOUSEHWHEEL = 0x020E;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool ChangeWindowMessageFilterEx(IntPtr hWnd, uint message, uint action, IntPtr changeInfo);
+
+        public static void AllowMouseInputThroughUipi(IntPtr hWnd)
+        {
+            uint[] msgs = {
+                WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                WM_RBUTTONDOWN, WM_RBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+                WM_MOUSEWHEEL, WM_MOUSEHWHEEL
+            };
+            foreach (var m in msgs)
+                ChangeWindowMessageFilterEx(hWnd, m, MSGFLT_ALLOW, IntPtr.Zero);
+        }
 #endif
     }
 }
