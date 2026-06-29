@@ -21,6 +21,26 @@ public static class Updater
         return Environment.ProcessPath!;
     }
 
+    private static Timer? _autoCheckTimer;
+
+    public static void StartAutoCheck()
+    {
+        Task.Run(async () =>
+        {
+            await CheckForUpdates();
+            if (NewVersionFound && Program.Config.AutoApply)
+                ApplyUpdate();
+        });
+
+        _autoCheckTimer = new Timer(async _ =>
+        {
+            if (!Program.Config.AutoUpdate) return;
+            await CheckForUpdates();
+            if (NewVersionFound && Program.Config.AutoApply)
+                ApplyUpdate();
+        }, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+    }
+
     public static async Task CheckForUpdates()
     {
         Status = "checking GitHub...";

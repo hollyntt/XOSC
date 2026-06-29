@@ -59,6 +59,8 @@ public class AppConfig
         public bool AutoCycleStatus = false;
         public string PublishPath = "https://github.com/hollyntt/XOSC/raw/refs/heads/master/publish/XOSC.zip";
         public bool BetaOptIn = false;
+        public bool AutoUpdate = true;
+        public bool AutoApply = false;
         public string Cookie = "";
         public string SavedVersion = "";
         public string OscIP = "127.0.0.1";
