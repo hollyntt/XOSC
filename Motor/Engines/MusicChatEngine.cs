@@ -21,10 +21,6 @@ public static class MusicChatEngine
     private static DateTime _lastWeatherFetch = DateTime.MinValue;
     private static int _weatherCode = 0;
     private static double _weatherTempC = 0;
-    private static string _activeAlert = string.Empty;
-    private static string _lastNotifiedAlert = string.Empty;
-    private static string _dismissedAlert = string.Empty;
-    private static DateTime _alertExpire = DateTime.MinValue;
     private static (string Title, double Position, double Length) _musicData = ("Chilling", 0, 0);
     private static DateTime _lastR = DateTime.MinValue, _lastS = DateTime.MinValue, _manualE = DateTime.MinValue;
     private static string _manualM = "";
@@ -33,8 +29,6 @@ public static class MusicChatEngine
     public static readonly object ListLock = new();
     private static Random _visRand = new Random();
     private static string[] _visBars = { " ", "▂", "▃", "▄", "▅", "▆", "▇", "█" };
-    public static string ActiveAlert => _activeAlert;
-    public static void DismissAlert() { _dismissedAlert = _activeAlert; _activeAlert = string.Empty; _alertExpire = DateTime.MinValue; }
 
 #if WINDOWS_BUILD
     private static WindowsMediaController.MediaManager? _mediaManager;
@@ -129,7 +123,7 @@ public static class MusicChatEngine
     }
 
     private static async Task<(double lat, double lon)> GetCoordinatesAsync() { var cfg = Program.Config; string search = !string.IsNullOrWhiteSpace(cfg.CustomCity) ? cfg.CustomCity : cfg.City; if (!string.IsNullOrWhiteSpace(search)) { try { using var http = new HttpClient(); var q = Uri.EscapeDataString(search); var j = await http.GetStringAsync($"https://geocoding-api.open-meteo.com/v1/search?name={q}&count=1"); using var doc = JsonDocument.Parse(j); var r = doc.RootElement.GetProperty("results"); if (r.ValueKind == JsonValueKind.Array && r.GetArrayLength() > 0) { var f = r[0]; return (f.GetProperty("latitude").GetDouble(), f.GetProperty("longitude").GetDouble()); } } catch { } } try { using var http = new HttpClient(); http.DefaultRequestHeaders.Add("User-Agent", "XOSC-Weather"); var j = await http.GetStringAsync("https://ipapi.co/json/"); using var doc = JsonDocument.Parse(j); return (doc.RootElement.GetProperty("latitude").GetDouble(), doc.RootElement.GetProperty("longitude").GetDouble()); } catch { } return (39.78, -89.65); }
-    private static async Task FetchWeatherAsync(double lat, double lon) { try { using var http = new HttpClient(); var u = $"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code,temperature_2m"; var r = await http.GetStringAsync(u); using var doc = JsonDocument.Parse(r); var c = doc.RootElement.GetProperty("current"); _weatherCode = c.GetProperty("weather_code").GetInt32(); _weatherTempC = c.GetProperty("temperature_2m").GetDouble(); } catch { } if (Program.Config.WeatherAlertMode) { try { using var http = new HttpClient(); http.DefaultRequestHeaders.Add("User-Agent", "XOSC-Alerts"); var j = await http.GetStringAsync($"https://api.weather.gov/alerts/active?point={lat:F4},{lon:F4}"); using var doc = JsonDocument.Parse(j); var f = doc.RootElement.GetProperty("features"); if (f.GetArrayLength() > 0) { var p = f[0].GetProperty("properties"); string evt = p.GetProperty("event").GetString() ?? "Alert"; string head = p.TryGetProperty("headline", out var hl) ? (hl.GetString() ?? evt) : evt; if (head.Length > 100) head = head[..100] + "…"; _activeAlert = $"{evt.ToUpper()}: {head}"; if (_activeAlert == _dismissedAlert) { _activeAlert = string.Empty; } else { _alertExpire = DateTime.Now.AddMinutes(5); } } else if (DateTime.Now > _alertExpire) { _activeAlert = string.Empty; _dismissedAlert = string.Empty; } } catch { if (DateTime.Now > _alertExpire) _activeAlert = string.Empty; } } }
+    private static async Task FetchWeatherAsync(double lat, double lon) { try { using var http = new HttpClient(); var u = $"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code,temperature_2m"; var r = await http.GetStringAsync(u); using var doc = JsonDocument.Parse(r); var c = doc.RootElement.GetProperty("current"); _weatherCode = c.GetProperty("weather_code").GetInt32(); _weatherTempC = c.GetProperty("temperature_2m").GetDouble(); } catch { } }
     private static string WeatherCodeToString(int code, double tempC, string unit) { string condition = code switch { 0 => "☀️ Clear", 1 => "🌤️ Mostly Clear", 2 => "⛅ Partly Cloudy", 3 => "☁️ Overcast", 45 or 48 => "🌫️ Foggy", 51 or 53 or 55 => "🌦️ Drizzle", 56 or 57 => "🌨️ Freezing Drizzle", 61 or 63 or 65 => "🌧️ Rain", 66 or 67 => "🌨️ Freezing Rain", 71 or 73 or 75 => "❄️ Snow", 77 => "🌨️ Snow Grains", 80 or 81 or 82 => "🌧️ Showers", 85 or 86 => "❄️ Snow Showers", 95 => "⛈️ Thunderstorm", 96 or 99 => "⛈️ Thunderstorm w/ Hail", _ => $"🌡️ Code {code}" }; if (!Program.Config.WeatherTempMode) return condition; string tempStr = unit == "°F" ? $"{Math.Round(tempC * 9.0 / 5.0 + 32, 0)}°F" : $"{Math.Round(tempC, 0)}°C"; return $"{condition} {tempStr}"; }
 
     private static async Task Update()
@@ -140,12 +134,8 @@ public static class MusicChatEngine
         if (cfg.AfkDetectionMode) AfkEngine.Update();
         if ((DateTime.Now - _lastS).TotalSeconds < Math.Max(cfg.Interval, 1.5)) return;
 
-        if (!cfg.WeatherAlertMode && !cfg.EasMode) _activeAlert = string.Empty;
-        bool alertActive = (cfg.EasMode || cfg.WeatherAlertMode) && !string.IsNullOrEmpty(_activeAlert) && DateTime.Now < _alertExpire;
-        if (alertActive && _activeAlert != _lastNotifiedAlert) { _lastNotifiedAlert = _activeAlert; NotifyOS(_activeAlert); }
-
+        if (!cfg.WeatherMode) _weatherCode = 0;
         var p1 = new List<string>(); bool statusAdded = false; string sText = null;
-        if (alertActive) { string al = $"⚠️ {_activeAlert}"; if (al.Length > 140) al = al[..140]; p1.Add(al); }
 
         if (cfg.AfkDetectionMode && AfkEngine.IsAfk) { string afkStr = string.IsNullOrEmpty(AfkEngine.AfkDuration) ? "💤 AFK" : $"💤 AFK {AfkEngine.AfkDuration}"; p1.Add(afkStr); }
         lock (ListLock) { if (cfg.StatusTextMode && cfg.StatusList.Count > 0) { if (_statusIdx >= cfg.StatusList.Count) _statusIdx = 0; sText = cfg.StatusList[_statusIdx].Text; p1.Add(AfkEngine.IsAfk ? "AFK" : sText); statusAdded = true; } }
@@ -170,7 +160,6 @@ public static class MusicChatEngine
         var p2 = new List<string>();
         if (cfg.PcMode) {
             HardwareService.Update();
-            if (alertActive) { string al = $"⚠️ {_activeAlert}"; if (al.Length > 140) al = al[..140]; p2.Add(al); }
             if (sText != null) p2.Add(AfkEngine.IsAfk ? "AFK" : sText);
             var e2 = new List<string>();
             if (cfg.TimeMode) { string t2 = DateTime.Now.ToString(cfg.MilitaryTime ? "HH:mm" : "hh:mm tt"); e2.Add($"🕒 {(cfg.StylizeTextMode ? Stylize(t2) : t2)}"); }
@@ -195,7 +184,7 @@ public static class MusicChatEngine
             foreach (var m in mem) p2.Add(m);
         }
         List<string> active; if (p1.Count > 0 && p2.Count > 0) { _showHardwareTick = !_showHardwareTick; active = _showHardwareTick ? p2 : p1; } else if (p2.Count > 0) { _showHardwareTick = true; active = p2; } else { _showHardwareTick = false; active = p1; }
-        string outStr = string.Join("\n", active); if (cfg.ThinMode) { if (outStr.Length > 138) outStr = outStr[..138]; outStr += "\u0003\u001f"; } SendOsc("/chatbox/input", outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = alertActive ? "Alert" : "Chatting";
+        string outStr = string.Join("\n", active); if (cfg.ThinMode) { if (outStr.Length > 138) outStr = outStr[..138]; outStr += "\u0003\u001f"; } SendOsc("/chatbox/input", outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = "Chatting";
         if (!_showHardwareTick && statusAdded && cfg.AutoCycleStatus) lock (ListLock) _statusIdx = (_statusIdx + 1) % cfg.StatusList.Count;
     }
 

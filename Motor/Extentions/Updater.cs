@@ -34,7 +34,7 @@ public static class Updater
 
         _autoCheckTimer = new Timer(async _ =>
         {
-            if (!Program.Config.AutoUpdate) return;
+            if (!Program.Config.AutoCheck) return;
             await CheckForUpdates();
             if (NewVersionFound && Program.Config.AutoApply)
                 ApplyUpdate();

@@ -23,7 +23,6 @@ public class AppConfig
         public bool WeatherMode = false;
         public bool WeatherTempMode = true;
         public string WeatherTempUnit = "°F";
-        public bool WeatherAlertMode = true;
         public bool TimeMode = false;
         public bool MilitaryTime = false;
         public bool SongMode = true;
@@ -32,7 +31,6 @@ public class AppConfig
         public bool AfkDetectionMode = false;
         public int AfkTimeout = 300;
         public bool VrBatteryMode = false;
-        public bool EasMode = false;
         public bool NetMode = false;
         public bool VrcPingMode = false;
         public bool HwNameMode = false;
@@ -59,7 +57,7 @@ public class AppConfig
         public bool AutoCycleStatus = false;
         public string PublishPath = "https://github.com/hollyntt/XOSC/raw/refs/heads/master/publish/XOSC.zip";
         public bool BetaOptIn = false;
-        public bool AutoUpdate = true;
+        public bool AutoCheck = true;
         public bool AutoApply = false;
         public string Cookie = "";
         public string SavedVersion = "";
