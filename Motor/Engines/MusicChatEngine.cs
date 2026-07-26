@@ -137,7 +137,7 @@ public static class MusicChatEngine
         if (!cfg.WeatherMode) _weatherCode = 0;
         var p1 = new List<string>(); bool statusAdded = false; string sText = null;
 
-        if (cfg.AfkDetectionMode && AfkEngine.IsAfk) { string afkStr = string.IsNullOrEmpty(AfkEngine.AfkDuration) ? "💤 AFK" : $"💤 AFK {AfkEngine.AfkDuration}"; p1.Add(afkStr); }
+        if (cfg.AfkDetectionMode && AfkEngine.IsAfk) { string afkStr = string.IsNullOrEmpty(AfkEngine.AfkDuration) ? "💤 AFK" : $"AFK for {AfkEngine.AfkDuration}"; p1.Add(afkStr); }
         lock (ListLock) { if (cfg.StatusTextMode && cfg.StatusList.Count > 0) { if (_statusIdx >= cfg.StatusList.Count) _statusIdx = 0; sText = cfg.StatusList[_statusIdx].Text; p1.Add(AfkEngine.IsAfk ? "AFK" : sText); statusAdded = true; } }
         string pr = cfg.Pronouns == "Custom..." ? cfg.CustomPronouns : cfg.Pronouns;
         if (cfg.PronounsMode && !string.IsNullOrEmpty(pr)) p1.Add($"{cfg.StatusIcon} {(cfg.StylizeTextMode ? Stylize(pr) : pr)}");
@@ -148,7 +148,7 @@ public static class MusicChatEngine
         if (e1.Count > 0) p1.Add(string.Join(" | ", e1));
         if (cfg.SongMode) {
             string sTitle = _musicData.Title == "Chilling" ? "Chilling" : _musicData.Title;
-            string sStr = $"♪ {(cfg.StylizeTextMode ? Stylize(sTitle) : sTitle)}";
+            string sStr = $"🎵 {(cfg.StylizeTextMode ? Stylize(sTitle) : sTitle)}";
             string top = "";
             if (cfg.SongProgressMode && cfg.AudioVisualizerMode) top = ((DateTime.Now.Second / 5) % 2 == 0) ? MakeVisualizer() : MakeProgressBar(_musicData.Position, _musicData.Length);
             else if (cfg.AudioVisualizerMode) top = MakeVisualizer();
