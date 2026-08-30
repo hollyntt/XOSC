@@ -10,6 +10,7 @@ using XOSC.Motor.Extentions;
 
 #if WINDOWS_BUILD
 using LibreHardwareMonitor.Hardware;
+using LibreHardwareMonitor.PawnIo;
 #endif
 
 namespace XOSC.Motor.Engines
@@ -29,6 +30,10 @@ namespace XOSC.Motor.Engines
         public static string GpuHotspot { get; private set; } = "--°C";
         public static string GpuPower   { get; private set; } = "--W";
         public static bool   IsElevated { get; private set; }
+        /// <summary>True when PawnIO kernel driver is installed (LHM 0.9.5+).</summary>
+        public static bool   PawnIoInstalled { get; private set; }
+        /// <summary>Short status for Dashboard (PawnIO / admin / OK).</summary>
+        public static string SensorBackendStatus { get; private set; } = "Unknown";
 #if WINDOWS_BUILD
         private static Computer _computer = null!;
         private static bool _initialized;
@@ -48,6 +53,23 @@ namespace XOSC.Motor.Engines
                 var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
                 var principal = new System.Security.Principal.WindowsPrincipal(identity);
                 IsElevated = principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+
+                // LHM 0.9.5+ uses PawnIO instead of WinRing0. Without it, AMD package
+                // temp/power (and many SuperIO sensors) stay at -- even when elevated.
+                try
+                {
+                    PawnIoInstalled = PawnIo.IsInstalled;
+                    SensorBackendStatus = PawnIoInstalled
+                        ? (IsElevated ? "PawnIO OK (admin)" : "PawnIO OK (not admin)")
+                        : "PawnIO missing — install from https://pawnio.eu/";
+                }
+                catch
+                {
+                    // Older LibreHardwareMonitorLib without PawnIo namespace
+                    PawnIoInstalled = false;
+                    SensorBackendStatus = "LHM too old (need 0.9.5+ / PawnIO)";
+                }
+
                 _computer = new Computer
                 {
                     IsCpuEnabled         = true,
@@ -107,18 +129,29 @@ namespace XOSC.Motor.Engines
         }
 
 #if WINDOWS_BUILD
+        private static void UpdateHardwareTree(IHardware hw)
+        {
+            if (hw == null) return;
+            hw.Update();
+            foreach (var sub in hw.SubHardware)
+                UpdateHardwareTree(sub);
+        }
+
         private static void CollectSensors(IHardware hw, List<ISensor> result)
         {
             result.AddRange(hw.Sensors);
             foreach (var sub in hw.SubHardware) CollectSensors(sub, result);
         }
 
-        private static string GetFirstSensorValue(IHardware hw, SensorType type, string[] namePriority, string fallback, Func<float, string> fmt)
+        // LHM often reports 0 until elevated / after a few polls — treat 0 as "no reading"
+        private static string GetFirstSensorValue(IHardware hw, SensorType type, string[] namePriority, string fallback, Func<float, string> fmt, float minValue = 0.5f)
         {
             if (hw == null) return fallback;
             var allSensors = new List<ISensor>();
             CollectSensors(hw, allSensors);
-            var typed = allSensors.Where(s => s.SensorType == type && s.Value.HasValue && s.Value.Value > 0).ToList();
+            var typed = allSensors
+                .Where(s => s.SensorType == type && s.Value.HasValue && s.Value.Value >= minValue)
+                .ToList();
             foreach (var name in namePriority)
             {
                 var match = typed.FirstOrDefault(s => s.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
@@ -131,26 +164,58 @@ namespace XOSC.Motor.Engines
         {
             if (!_initialized) return;
 
+            // Always refresh every hardware node — Zen 4 / modern AMD often parks
+            // package temp & PPT under SuperIO or a secondary CPU node.
+            foreach (var hw in _computer.Hardware)
+                UpdateHardwareTree(hw);
+
             if (_cpu != null)
             {
-                _cpu.Update();
-                CpuLoad  = GetFirstSensorValue(_cpu, SensorType.Load,        new[] { "CPU Total", "Total" },                                      "--%",  v => $"{v:F0}%");
-                CpuTemp  = GetFirstSensorValue(_cpu, SensorType.Temperature, new[] { "Package", "Core (Tctl/Tdie)", "Tctl", "Tdie", "CCD" },      "--°C", v => $"{v:F0}°C");
-                CpuPower = GetFirstSensorValue(_cpu, SensorType.Power,       new[] { "Package", "CPU PPT", "Total Power", "Core Power", "Core" }, "--W",  v => $"{v:F0}W");
+                CpuLoad = GetFirstSensorValue(_cpu, SensorType.Load, new[] { "CPU Total", "Total", "CPU Core" }, "--%", v => $"{v:F0}%");
 
-                if (CpuTemp == "--°C" && _mobo != null)
+                // AMD Zen 4 (7600X etc.) uses Tctl/Tdie/CCD naming; Intel uses Package/Core Max
+                string[] cpuTempNames = {
+                    "CPU Package", "Package", "Tctl/Tdie", "Core (Tctl/Tdie)",
+                    "Tctl", "Tdie", "CCD1", "CCD2", "CCD", "Core Average", "Core Max",
+                    "CPU Core", "Core #", "SMU", "L3"
+                };
+                string[] cpuPowerNames = {
+                    "CPU Package Power", "Package Power", "Package", "CPU PPT", "PPT",
+                    "Socket Power", "Socket", "IA Cores Power", "CPU Cores Power",
+                    "Total Power", "Core Power", "SMU"
+                };
+
+                CpuTemp  = GetFirstSensorValue(_cpu, SensorType.Temperature, cpuTempNames, "--°C", v => $"{v:F0}°C", minValue: 1f);
+                if (CpuTemp == "--°C")
+                    CpuTemp = GetHighestSensorValue(_cpu, SensorType.Temperature, null, "--°C", v => $"{v:F0}°C");
+
+                CpuPower = GetFirstSensorValue(_cpu, SensorType.Power, cpuPowerNames, "--W", v => $"{v:F0}W", minValue: 0.5f);
+                if (CpuPower == "--W")
                 {
-                    _mobo.Update();
-                    CpuTemp = GetFirstSensorValue(_mobo, SensorType.Temperature, new[] { "CPU", "Processor" }, "--°C", v => $"{v:F0}°C");
+                    float? corePowerSum = SumSensorValues(_cpu, SensorType.Power, new[] { "Core", "PPT", "Package" });
+                    if (corePowerSum.HasValue && corePowerSum.Value > 0)
+                        CpuPower = $"{corePowerSum.Value:F0}W";
+                    else
+                        CpuPower = GetHighestSensorValue(_cpu, SensorType.Power, null, "--W", v => $"{v:F0}W");
+                }
+
+                // Full-machine scan: pick best CPU-like temp/power from any hardware node
+                // (motherboard SuperIO, secondary AMD nodes, etc.)
+                if (CpuTemp == "--°C" || CpuPower == "--W")
+                {
+                    var (t, p) = ScanComputerCpuSensors(cpuTempNames, cpuPowerNames);
+                    if (CpuTemp == "--°C" && t != null) CpuTemp = t;
+                    if (CpuPower == "--W" && p != null) CpuPower = p;
                 }
             }
             if (_gpu != null)
             {
-                _gpu.Update();
+                UpdateHardwareTree(_gpu);
+                UpdateHardwareTree(_gpu);
                 GpuLoad    = GetFirstSensorValue(_gpu, SensorType.Load,        new[] { "D3D 3D", "GPU Core", "3D", "Core" },           "--%",  v => $"{v:F0}%");
-                GpuTemp    = GetFirstSensorValue(_gpu, SensorType.Temperature, new[] { "GPU Core", "Core" },                            "--°C", v => $"{v:F0}°C");
-                GpuHotspot = GetFirstSensorValue(_gpu, SensorType.Temperature, new[] { "Hot spot", "Hotspot", "GPU Hot Spot" },         "--°C", v => $"{v:F0}°C");
-                GpuPower   = GetFirstSensorValue(_gpu, SensorType.Power,       new[] { "GPU Power", "Package", "Total Board", "PPT" }, "--W",  v => $"{v:F0}W");
+                GpuTemp    = GetFirstSensorValue(_gpu, SensorType.Temperature, new[] { "GPU Core", "Core" },                            "--°C", v => $"{v:F0}°C", minValue: 1f);
+                GpuHotspot = GetFirstSensorValue(_gpu, SensorType.Temperature, new[] { "Hot spot", "Hotspot", "GPU Hot Spot" },         "--°C", v => $"{v:F0}°C", minValue: 1f);
+                GpuPower   = GetFirstSensorValue(_gpu, SensorType.Power,       new[] { "GPU Power", "Package", "Total Board", "PPT" }, "--W",  v => $"{v:F0}W", minValue: 0.5f);
                 
                 float? vramUsed  = GetVramSensorValue(_gpu, new[] { "D3D Dedicated Memory Used",  "Dedicated Memory Used",  "Memory Used"  });
                 float? vramTotal = GetVramSensorValue(_gpu, new[] { "D3D Dedicated Memory Total", "Dedicated Memory Total", "Memory Total" });
@@ -168,7 +233,7 @@ namespace XOSC.Motor.Engines
                     VramTotal = $"{t:F1} GB";
                 }
             }
-            if (_ram != null) _ram.Update();
+            if (_ram != null) UpdateHardwareTree(_ram);
             var memStatus = new NativeMethods.MEMORYSTATUSEX();
             memStatus.dwLength = (uint)Marshal.SizeOf(memStatus);
             if (NativeMethods.GlobalMemoryStatusEx(ref memStatus))
@@ -193,6 +258,70 @@ namespace XOSC.Motor.Engines
             return "";
         }
 
+        /// <summary>
+        /// Last-resort scan of every hardware node for CPU-like temp/power sensors.
+        /// Needed for Zen 4 where package/PPT may live under SuperIO or a second AMD node.
+        /// Skips GPU hardware so we don't steal RX 7600 readings.
+        /// </summary>
+        private static (string? temp, string? power) ScanComputerCpuSensors(string[] tempNames, string[] powerNames)
+        {
+            string? bestTemp = null;
+            string? bestPower = null;
+            float bestTempVal = -1, bestPowerVal = -1;
+
+            foreach (var hw in _computer.Hardware)
+            {
+                // Never pull from discrete/integrated GPUs
+                if (hw.HardwareType is HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel)
+                    continue;
+
+                var sensors = new List<ISensor>();
+                CollectSensors(hw, sensors);
+
+                foreach (var s in sensors)
+                {
+                    if (!s.Value.HasValue) continue;
+                    float v = s.Value.Value;
+
+                    if (s.SensorType == SensorType.Temperature && v >= 15f && v <= 120f)
+                    {
+                        bool nameMatch = tempNames.Any(n => s.Name.Contains(n, StringComparison.OrdinalIgnoreCase))
+                                         || s.Name.Contains("CPU", StringComparison.OrdinalIgnoreCase)
+                                         || s.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+                                         || s.Name.Contains("Ryzen", StringComparison.OrdinalIgnoreCase)
+                                         || hw.HardwareType == HardwareType.Cpu;
+                        // Prefer named package/Tctl over random board sensors; still accept any CPU-tree reading
+                        if (nameMatch || hw.HardwareType == HardwareType.Cpu)
+                        {
+                            // Prefer higher "priority" names by keeping the max sensible value on CPU hardware
+                            if (v > bestTempVal)
+                            {
+                                bestTempVal = v;
+                                bestTemp = $"{v:F0}°C";
+                            }
+                        }
+                    }
+                    else if (s.SensorType == SensorType.Power && v >= 0.5f && v <= 500f)
+                    {
+                        bool nameMatch = powerNames.Any(n => s.Name.Contains(n, StringComparison.OrdinalIgnoreCase))
+                                         || s.Name.Contains("CPU", StringComparison.OrdinalIgnoreCase)
+                                         || s.Name.Contains("PPT", StringComparison.OrdinalIgnoreCase)
+                                         || s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase);
+                        if (nameMatch || hw.HardwareType == HardwareType.Cpu)
+                        {
+                            if (v > bestPowerVal)
+                            {
+                                bestPowerVal = v;
+                                bestPower = $"{v:F0}W";
+                            }
+                        }
+                    }
+                }
+            }
+
+            return (bestTemp, bestPower);
+        }
+
         private static string GetHighestSensorValue(IHardware hw, SensorType type, string[] nameParts, string fallback, Func<float, string> fmt, bool strict = false)
         {
             if (hw == null) return fallback;
@@ -207,7 +336,14 @@ namespace XOSC.Motor.Engines
             }
             float maxVal = -1; bool found = false;
             foreach (var s in sensors)
-                if (s.Value.HasValue && s.Value.Value > 0 && (!found || s.Value.Value > maxVal)) { maxVal = s.Value.Value; found = true; }
+            {
+                if (!s.Value.HasValue) continue;
+                float v = s.Value.Value;
+                // Temps outside 1–120 are almost always placeholders / wrong sensors
+                if (type == SensorType.Temperature && (v < 1f || v > 120f)) continue;
+                if (type == SensorType.Power && (v < 0.5f || v > 500f)) continue;
+                if (v > 0 && (!found || v > maxVal)) { maxVal = v; found = true; }
+            }
             return found ? fmt(maxVal) : fallback;
         }
 
@@ -223,6 +359,18 @@ namespace XOSC.Motor.Engines
             }
             var fb = allSensors.FirstOrDefault(s => (s.SensorType == SensorType.Data || s.SensorType == SensorType.SmallData) && !s.Name.Contains("Shared", StringComparison.OrdinalIgnoreCase) && (s.Name.Contains("GPU Memory Total", StringComparison.OrdinalIgnoreCase) || s.Name.Contains("Memory Total", StringComparison.OrdinalIgnoreCase)) && s.Value.HasValue);
             return fb?.Value;
+        }
+
+        private static float? SumSensorValues(IHardware hw, SensorType type, string[]? nameParts = null)
+        {
+            if (hw == null) return null;
+            var allSensors = new List<ISensor>();
+            CollectSensors(hw, allSensors);
+            var sensors = allSensors.Where(x => x.SensorType == type && x.Value.HasValue && x.Value.Value > 0).ToList();
+            if (nameParts?.Length > 0)
+                sensors = sensors.Where(x => nameParts.Any(p => x.Name.Contains(p, StringComparison.OrdinalIgnoreCase))).ToList();
+            if (sensors.Count == 0) return null;
+            return sensors.Sum(x => x.Value!.Value);
         }
 
         private class UpdateVisitor : IVisitor

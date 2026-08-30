@@ -17,7 +17,9 @@ XOSC is a high-performance, native C# OSC manager for VRChat. It provides a slee
 ## 🛠️ Prerequisites
 
 ### Windows
-No external dependencies required. XOSC will automatically detect your media sessions and hardware.
+*   **Media:** No extra apps required — Windows Media Transport Controls handle Spotify, SoundCloud, etc.
+*   **Hardware sensors (CPU package temp / wattage, motherboard sensors):** Install **[PawnIO](https://pawnio.eu/)** once (signed kernel driver used by LibreHardwareMonitor 0.9.5+). Without it, CPU load and GPU stats still work; package temp/power may show as `--`.
+*   Run XOSC **as Administrator** when CPU temp/power stay at `--`. The Dashboard shows PawnIO status and an admin relaunch button.
 
 ### Linux
 Your system needs the following tools to handle hardware and music scraping:
@@ -29,7 +31,9 @@ Your system needs the following tools to handle hardware and music scraping:
 ## 🚀 Installation
 
 1. Download the latest release for your platform from the [Releases Page](https://github.com/hollyntt/XOSC/releases/).
-2. **Windows:** Simply run `XOSC.exe`.
+2. **Windows:**
+   1. Install [PawnIO](https://pawnio.eu/) if you want full CPU temp/power readings.
+   2. Run `XOSC.exe` (preferably as Administrator for hardware sensors).
 3. **Linux:**
    ```bash
    chmod +x XOSC
