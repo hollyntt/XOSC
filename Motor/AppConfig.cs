@@ -5,6 +5,7 @@ namespace XOSC.Motor;
 public class AppConfig
 {
     public bool ChatboxEnabled = true;
+        public bool ManualSendSound = false;
         public int Interval = 3;
         public string City = "Springfield";
         public string CustomCity = "";
@@ -27,6 +28,9 @@ public class AppConfig
         public bool MilitaryTime = false;
         public bool SongMode = true;
         public bool SongProgressMode = false;
+        public int ProgressBarWidth = 14;
+        public string ProgressBarFilled = "━";
+        public string ProgressBarEmpty = "─";
         public bool AudioVisualizerMode = false;
         public bool AfkDetectionMode = false;
         public int AfkTimeout = 300;

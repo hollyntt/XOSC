@@ -1,5 +1,5 @@
-﻿using System.Diagnostics;
-using System.Net.Sockets;
+using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -10,116 +10,75 @@ namespace XOSC.Motor.Engines;
 
 public static class MusicChatEngine
 {
-    private static UdpClient _client = new UdpClient();
-    private static readonly object _clientLock = new();
     private static CancellationTokenSource? _cts;
     private static int _statusIdx = 0;
     private static bool _showHardwareTick = false;
     private static string _cpu = "CPU", _gpu = "GPU";
-    private static string _distroName = null;
+    private static readonly IPlatformEngine _platformEngine = PlatformEngine.Create();
 
     private static DateTime _lastWeatherFetch = DateTime.MinValue;
     private static int _weatherCode = 0;
     private static double _weatherTempC = 0;
-    private static (string Title, double Position, double Length) _musicData = ("Chilling", 0, 0);
+    private static MusicData _musicData = new("Chilling", 0, 0);
     private static DateTime _lastR = DateTime.MinValue, _lastS = DateTime.MinValue, _manualE = DateTime.MinValue;
     private static string _manualM = "";
+    private static int _manualSoundPending;
+    private static int _isManuallyTyping;
+    private static long _manualTypingUntilTicks;
     public static int PacketsSent = 0;
     public static string EngineState = "Idle";
+    private static string _lastChatboxMessage = "";
+    public static string LastChatboxMessage => Volatile.Read(ref _lastChatboxMessage);
     public static readonly object ListLock = new();
     private static Random _visRand = new Random();
     private static string[] _visBars = { " ", "▂", "▃", "▄", "▅", "▆", "▇", "█" };
 
-#if WINDOWS_BUILD
-    private static WindowsMediaController.MediaManager? _mediaManager;
-#endif
-
     public static void Init() 
     { 
-        _client = new UdpClient(); 
+        OscEngine.Initialize();
         _cts?.Cancel(); 
         _cts = new CancellationTokenSource(); 
         HardwareService.Initialize(); 
         NetworkStats.Start(); 
         ScrapeHardwareNames(); 
-        StartNativeMediaScraper(); 
+        _platformEngine.Start(); 
         Task.Run(() => Loop(_cts.Token)); 
     }
 
-    public static void SetManual(string m) { _manualM = m; _manualE = DateTime.Now.AddSeconds(20); }
+    public static void SetManual(string m)
+    {
+        StopManualTyping();
+        _manualM = m;
+        _manualE = DateTime.Now.AddSeconds(20);
+        Interlocked.Exchange(ref _manualSoundPending, Program.Config.ManualSendSound ? 1 : 0);
+    }
+
+    public static void NotifyManualTyping()
+    {
+        if (!Program.Config.ChatboxEnabled)
+            return;
+
+        Interlocked.Exchange(ref _manualTypingUntilTicks, DateTime.UtcNow.AddSeconds(2).Ticks);
+        if (Interlocked.Exchange(ref _isManuallyTyping, 1) == 0)
+            OscEngine.SendChatboxTyping(true);
+    }
+
+    private static void StopManualTyping()
+    {
+        Interlocked.Exchange(ref _manualTypingUntilTicks, 0);
+        if (Interlocked.Exchange(ref _isManuallyTyping, 0) == 1)
+            OscEngine.SendChatboxTyping(false);
+    }
 
     private static async Task Loop(CancellationToken t) 
     { 
         while (!t.IsCancellationRequested) 
         { 
             if (Program.Config.ChatboxEnabled) try { await Update(); } catch { } 
+            if (!Program.Config.ChatboxEnabled || DateTime.UtcNow.Ticks >= Interlocked.Read(ref _manualTypingUntilTicks))
+                StopManualTyping();
             await Task.Delay(1000, t); 
         } 
-    }
-
-    private static void StartNativeMediaScraper()
-    {
-#if WINDOWS_BUILD
-        _mediaManager = new WindowsMediaController.MediaManager();
-        _mediaManager.OnAnyMediaPropertyChanged += (session, props) => {
-            _musicData.Title = string.IsNullOrWhiteSpace(props.Artist) ? props.Title : $"{props.Artist} - {props.Title}";
-            _musicData.Title = Regex.Replace(_musicData.Title, @"[\r\n\|]", "").Trim();
-        };
-        _mediaManager.OnAnyTimelinePropertyChanged += (session, timeline) => {
-            _musicData.Position = timeline.Position.TotalSeconds;
-            _musicData.Length = timeline.EndTime.TotalSeconds;
-        };
-        _mediaManager.Start();
-        
-        Task.Run(async () => {
-            await Task.Delay(2000);
-            _mediaManager.ForceUpdate();
-        });
-#endif
-    }
-
-    private static (string Title, double Position, double Length) FetchMusicData()
-    {
-#if WINDOWS_BUILD
-        if (_mediaManager != null) {
-            var sessions = _mediaManager.CurrentMediaSessions;
-            if (sessions.Count > 0) {
-                foreach (var session in sessions.Values) {
-                    var props = session.ControlSession.TryGetMediaPropertiesAsync().GetAwaiter().GetResult();
-                    if (!string.IsNullOrWhiteSpace(props.Title)) return _musicData;
-                }
-            }
-        }
-#endif
-        try
-        {
-            var processes = Process.GetProcesses();
-            foreach (var p in processes)
-            {
-                if (p.ProcessName.Contains("soundcloud",
-                        StringComparison.OrdinalIgnoreCase) &&
-                    !string.IsNullOrWhiteSpace(p.MainWindowTitle))
-                    return (p.MainWindowTitle, 0, 0);
-            }
-        }
-        catch
-        {
-        }
-        
-        try
-        {
-            var spot = Process.GetProcessesByName("Spotify");
-            foreach (var p in spot)
-            {
-                string t = p.MainWindowTitle;
-                if (!string.IsNullOrWhiteSpace(t) && t != "Spotify" && t != "Spotify Premium")
-                    return (t, 0, 0);
-            }
-        }
-        catch
-        {
-        }
-        return ("Chilling", 0, 0);
     }
 
     private static async Task<(double lat, double lon)> GetCoordinatesAsync() { var cfg = Program.Config; string search = !string.IsNullOrWhiteSpace(cfg.CustomCity) ? cfg.CustomCity : cfg.City; if (!string.IsNullOrWhiteSpace(search)) { try { using var http = new HttpClient(); var q = Uri.EscapeDataString(search); var j = await http.GetStringAsync($"https://geocoding-api.open-meteo.com/v1/search?name={q}&count=1"); using var doc = JsonDocument.Parse(j); var r = doc.RootElement.GetProperty("results"); if (r.ValueKind == JsonValueKind.Array && r.GetArrayLength() > 0) { var f = r[0]; return (f.GetProperty("latitude").GetDouble(), f.GetProperty("longitude").GetDouble()); } } catch { } } try { using var http = new HttpClient(); http.DefaultRequestHeaders.Add("User-Agent", "XOSC-Weather"); var j = await http.GetStringAsync("https://ipapi.co/json/"); using var doc = JsonDocument.Parse(j); return (doc.RootElement.GetProperty("latitude").GetDouble(), doc.RootElement.GetProperty("longitude").GetDouble()); } catch { } return (39.78, -89.65); }
@@ -129,8 +88,8 @@ public static class MusicChatEngine
     private static async Task Update()
     {
         var cfg = Program.Config;
-        if (DateTime.Now < _manualE) { EngineState = "Manual"; SendOsc("/chatbox/input", $"💬 {_manualM}"); return; }
-        if ((DateTime.Now - _lastR).TotalSeconds >= cfg.Interval) { _musicData = FetchMusicData(); if (cfg.WeatherMode) { var c = await GetCoordinatesAsync(); await FetchWeatherAsync(c.lat, c.lon); } if (cfg.NetMode) await NetworkStats.UpdateAsync(); _lastR = DateTime.Now; }
+        if (DateTime.Now < _manualE) { EngineState = "Manual"; string manualMessage = $"💬 {_manualM}"; Volatile.Write(ref _lastChatboxMessage, manualMessage); bool notificationSound = Interlocked.Exchange(ref _manualSoundPending, 0) == 1; OscEngine.SendChatboxInput(manualMessage, notificationSound); return; }
+        if ((DateTime.Now - _lastR).TotalSeconds >= cfg.Interval) { _musicData = _platformEngine.GetMusicData(); if (cfg.WeatherMode) { var c = await GetCoordinatesAsync(); await FetchWeatherAsync(c.lat, c.lon); } if (cfg.NetMode) await NetworkStats.UpdateAsync(); _lastR = DateTime.Now; }
         if (cfg.AfkDetectionMode) AfkEngine.Update();
         if ((DateTime.Now - _lastS).TotalSeconds < Math.Max(cfg.Interval, 1.5)) return;
 
@@ -143,7 +102,7 @@ public static class MusicChatEngine
         if (cfg.PronounsMode && !string.IsNullOrEmpty(pr)) p1.Add($"{cfg.StatusIcon} {(cfg.StylizeTextMode ? Stylize(pr) : pr)}");
         var e1 = new List<string>();
         if (cfg.TimeMode) { string t = DateTime.Now.ToString(cfg.MilitaryTime ? "HH:mm" : "hh:mm tt"); e1.Add($"🕒 {(cfg.StylizeTextMode ? Stylize(t) : t)}"); }
-        if (cfg.DistroMode) { string dn = GetDistroName(); e1.Add(cfg.StylizeTextMode ? Stylize(dn) : dn); }
+        if (cfg.DistroMode) { string dn = _platformEngine.GetOperatingSystemName(); e1.Add(cfg.StylizeTextMode ? Stylize(dn) : dn); }
         if (cfg.WeatherMode) e1.Add(WeatherCodeToString(_weatherCode, _weatherTempC, cfg.WeatherTempUnit));
         if (e1.Count > 0) p1.Add(string.Join(" | ", e1));
         if (cfg.SongMode) {
@@ -163,7 +122,7 @@ public static class MusicChatEngine
             if (sText != null) p2.Add(AfkEngine.IsAfk ? "AFK" : sText);
             var e2 = new List<string>();
             if (cfg.TimeMode) { string t2 = DateTime.Now.ToString(cfg.MilitaryTime ? "HH:mm" : "hh:mm tt"); e2.Add($"🕒 {(cfg.StylizeTextMode ? Stylize(t2) : t2)}"); }
-            if (cfg.DistroMode) { string dn2 = GetDistroName(); e2.Add(cfg.StylizeTextMode ? Stylize(dn2) : dn2); }
+            if (cfg.DistroMode) { string dn2 = _platformEngine.GetOperatingSystemName(); e2.Add(cfg.StylizeTextMode ? Stylize(dn2) : dn2); }
             if (e2.Count > 0) p2.Add(string.Join(" | ", e2));
             
             string cS = cfg.HwNameMode ? StatsComponentType.CPU.GetSmallName() : "CPU"; string gS = cfg.HwNameMode ? StatsComponentType.GPU.GetSmallName() : "GPU"; string rS = cfg.HwNameMode ? StatsComponentType.RAM.GetSmallName() : "RAM"; string vS = cfg.HwNameMode ? StatsComponentType.VRAM.GetSmallName() : "VRAM";
@@ -184,88 +143,41 @@ public static class MusicChatEngine
             foreach (var m in mem) p2.Add(m);
         }
         List<string> active; if (p1.Count > 0 && p2.Count > 0) { _showHardwareTick = !_showHardwareTick; active = _showHardwareTick ? p2 : p1; } else if (p2.Count > 0) { _showHardwareTick = true; active = p2; } else { _showHardwareTick = false; active = p1; }
-        string outStr = string.Join("\n", active); if (cfg.ThinMode) { if (outStr.Length > 138) outStr = outStr[..138]; outStr += "\u0003\u001f"; } SendOsc("/chatbox/input", outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = "Chatting";
+        string outStr = string.Join("\n", active); if (cfg.ThinMode) { if (outStr.Length > 138) outStr = outStr[..138]; outStr += "\u0003\u001f"; } Volatile.Write(ref _lastChatboxMessage, outStr); OscEngine.SendChatboxInput(outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = "Chatting";
         if (!_showHardwareTick && statusAdded && cfg.AutoCycleStatus) lock (ListLock) _statusIdx = (_statusIdx + 1) % cfg.StatusList.Count;
     }
 
     public static void NotifyOS(string txt) { string s = txt.Replace("'", "").Replace("\"", "").Replace("\n", " "); if (s.Length > 200) s = s[..200] + "..."; try { if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) { string ps = "Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Warning; $n.Visible = $true; $n.ShowBalloonTip(8000, 'XOSC Alert', '" + s + "', [System.Windows.Forms.ToolTipIcon]::Warning); Start-Sleep -Seconds 9; $n.Visible = $false"; Process.Start(new ProcessStartInfo("powershell", "-NoProfile -WindowStyle Hidden -Command \"" + ps + "\"") { CreateNoWindow = true, UseShellExecute = false }); } else Process.Start(new ProcessStartInfo("notify-send", "--urgency=critical \"XOSC Alert\" \"" + s + "\"") { UseShellExecute = false, CreateNoWindow = true }); } catch { } }
-    private static void SendOsc(string addr, string txt) { try { List<byte> p = new(); void Add(string s) { byte[] b = Encoding.UTF8.GetBytes(s); p.AddRange(b); p.Add(0); while (p.Count % 4 != 0) p.Add(0); } Add(addr); Add(addr == "/chatbox/input" ? ",sTF" : ",s"); Add(txt); var ip = Program.Config.OscIP.Trim(); var pt = Program.Config.OscPort; if (string.IsNullOrEmpty(ip)) return; lock (_clientLock) { _client.Send(p.ToArray(), p.Count, ip, pt); } } catch (Exception) { lock (_clientLock) { try { _client.Close(); } catch { } _client = new UdpClient(); } } }
     private static string GetVrBattery() { try { var psi = new ProcessStartInfo("powershell", "-Command \"if (Get-Process vrserver -ErrorAction SilentlyContinue) { '85%' } else { '0%' }\"") { RedirectStandardOutput = true, CreateNoWindow = true, UseShellExecute = false }; using var p = Process.Start(psi); return p?.StandardOutput.ReadToEnd().Trim() ?? "0%"; } catch { return "0%"; } }
 
 
     private static string MakeProgressBar(double pos, double len)
     {
-        if (len <= 0) return "";
-        if (pos > len) pos = len;
-        if (pos < 0) pos = 0;
-        int width = 8;
-        int filled = (int)Math.Round((pos / len) * width);
-        filled = Math.Clamp(filled, 0, width);
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < filled; i++) sb.Append("■");
-        for (int i = 0; i < (width - filled); i++) sb.Append("□");
-        sb.Append("] ");
-        var p = TimeSpan.FromSeconds(pos);
-        var l = TimeSpan.FromSeconds(len);
-        sb.Append($"{(int)p.TotalMinutes}:{p.Seconds:D2}/{(int)l.TotalMinutes}:{l.Seconds:D2}");
-        return sb.ToString();
+        if (!double.IsFinite(pos) || !double.IsFinite(len) || len <= 0)
+            return "";
+
+        pos = Math.Clamp(pos, 0, len);
+        int width = Math.Clamp(Program.Config.ProgressBarWidth, 4, 32);
+        int filled = Math.Clamp((int)Math.Round(pos / len * width), 0, width);
+        string filledGlyph = GetProgressGlyph(Program.Config.ProgressBarFilled, "━");
+        string emptyGlyph = GetProgressGlyph(Program.Config.ProgressBarEmpty, "─");
+        return $"{string.Concat(Enumerable.Repeat(filledGlyph, filled))}{string.Concat(Enumerable.Repeat(emptyGlyph, width - filled))} {FormatTrackTime(pos)} - {FormatTrackTime(len)}";
+    }
+
+    private static string GetProgressGlyph(string? configured, string fallback) =>
+        string.IsNullOrWhiteSpace(configured)
+            ? fallback
+            : StringInfo.GetNextTextElement(configured);
+
+    private static string FormatTrackTime(double seconds)
+    {
+        long totalSeconds = (long)Math.Floor(Math.Clamp(seconds, 0, TimeSpan.MaxValue.TotalSeconds));
+        return $"{totalSeconds / 60}:{totalSeconds % 60:D2}";
     }
 
     private static string MakeVisualizer() { StringBuilder sb = new StringBuilder("♪ "); for (int i = 0; i < 14; i++) sb.Append(_visBars[_visRand.Next(0, _visBars.Length)]); return sb.Append(" ♪").ToString(); }
 
     private static void ScrapeHardwareNames() { string log = Program.FindVrcLog(); if (log == null) return; try { using var fs = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); using var sr = new StreamReader(fs); string l; int count = 0; while ((l = sr.ReadLine()) != null && count < 2000) { count++; if (l.Contains("Processor Type:")) { string r = l.Substring(l.IndexOf(':') + 1); _cpu = Regex.Replace(Regex.Replace(r, @"(?i)(AMD|Intel(?:\(R\))?|Core(?:\(TM\))?|Ryzen|\d+-Core|Processor|@.*)", " "), @"\s+", " ").Trim(); } else if (l.Contains("Graphics Device Name:")) { string r = l.Substring(l.IndexOf(':') + 1); _gpu = Regex.Replace(Regex.Replace(r, @"(?i)(NVIDIA|AMD|GeForce|Radeon|Graphics|\(RADV.*?\)|Direct3D.*)", ""), @"\s+", " ").Trim(); } } } catch { } }
     
-    private static string GetDistroName() 
-    { 
-        if (_distroName != null) return _distroName;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) 
-        { 
-            try 
-            { 
-                var psi = new ProcessStartInfo("powershell", "-NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Caption\"")
-                {
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var proc = Process.Start(psi);
-                string? caption = proc?.StandardOutput.ReadToEnd().Trim();
-                if (!string.IsNullOrWhiteSpace(caption))
-                {
-                    _distroName = caption;
-                    return _distroName;
-                }
-                throw new Exception("empty caption");
-            } 
-            catch 
-            { 
-                try 
-                { 
-                    using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
-                    _distroName = key?.GetValue("ProductName")?.ToString() ?? "Windows";
-                } 
-                catch { _distroName = "Windows"; } 
-                return _distroName; 
-            } 
-        } 
-        try 
-        { 
-            if (File.Exists("/etc/os-release")) 
-            { 
-                string? n = null, p = null; 
-                foreach (var l in File.ReadLines("/etc/os-release")) 
-                { 
-                    if (l.StartsWith("NAME=")) n = l[5..].Trim('"', '\''); 
-                    if (l.StartsWith("PRETTY_NAME=")) p = l[12..].Trim('"', '\''); 
-                } 
-                _distroName = (n ?? p ?? "Linux").Split(' ')[0]; 
-                return _distroName; 
-            } 
-        } catch { } 
-        _distroName = "Linux"; 
-        return _distroName; 
-    }
-
-
     private static string Stylize(string t) { string n = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", s = "ᵃᵇᶜᵈᵉᶠᵍʰᶦʲᵏˡᵐⁿᵒᵖᵠʳˢᵗᵘᵛʷˣʸᶻᵃᵇᶜᵈᵉᶠᵍʰᶦʲᵏˡᵐⁿᵒᵖᵠʳˢᵗᵘᵛʷˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹"; StringBuilder sb = new(); foreach (char c in t) { int i = n.IndexOf(c); sb.Append(i != -1 ? s[i] : c); } return sb.ToString(); }
 }

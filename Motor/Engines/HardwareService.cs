@@ -383,6 +383,9 @@ namespace XOSC.Motor.Engines
 #endif
 
 #if !WINDOWS_BUILD
+        private static long _previousCpuTotal;
+        private static long _previousCpuIdle;
+
         private static void UpdateLinux()
         {
             UpdateCpuLoad();
@@ -399,9 +402,19 @@ namespace XOSC.Motor.Engines
                 if (line == null) { CpuLoad = "--%"; return; }
                 var p = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 5) { CpuLoad = "--%"; return; }
-                long user = long.Parse(p[1]), nice = long.Parse(p[2]), sys = long.Parse(p[3]), idle = long.Parse(p[4]), iow = p.Length > 5 ? long.Parse(p[5]) : 0;
-                long total = user + nice + sys + idle + iow;
-                CpuLoad = total > 0 ? $"{(total - idle - iow) * 100.0 / total:F0}%" : "--%";
+                long idle = long.Parse(p[4]), iow = p.Length > 5 ? long.Parse(p[5]) : 0;
+                long total = 0;
+                for (int i = 1; i < p.Length && i <= 8; i++)
+                    total += long.Parse(p[i]);
+                long idleTotal = idle + iow;
+                long totalDelta = total - _previousCpuTotal;
+                long idleDelta = idleTotal - _previousCpuIdle;
+                bool hasPreviousSample = _previousCpuTotal > 0;
+                _previousCpuTotal = total;
+                _previousCpuIdle = idleTotal;
+                CpuLoad = hasPreviousSample && totalDelta > 0
+                    ? $"{Math.Clamp((totalDelta - idleDelta) * 100.0 / totalDelta, 0, 100):F0}%"
+                    : "--%";
             }
             catch { CpuLoad = "--%"; }
         }
@@ -417,8 +430,11 @@ namespace XOSC.Motor.Engines
                     string typePath = Path.Combine(zone, "type");
                     if (!File.Exists(tempPath)) continue;
                     string type = File.Exists(typePath) ? File.ReadAllText(typePath).Trim() : "";
-                    if (!type.Contains("acpitz") && !type.Contains("x86_pkg") && !type.Contains("cpu")) continue;
-                    if (double.TryParse(File.ReadAllText(tempPath).Trim(), out double raw)) best = Math.Max(best, raw / 1000.0);
+                    if (!type.Contains("acpitz", StringComparison.OrdinalIgnoreCase) &&
+                        !type.Contains("x86_pkg", StringComparison.OrdinalIgnoreCase) &&
+                        !type.Contains("cpu", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (double.TryParse(File.ReadAllText(tempPath).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double raw))
+                        best = Math.Max(best, raw / 1000.0);
                 }
                 CpuTemp = best > double.MinValue ? $"{best:F0}°C" : "--°C";
             }

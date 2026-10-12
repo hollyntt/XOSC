@@ -22,9 +22,11 @@ XOSC is a high-performance, native C# OSC manager for VRChat. It provides a slee
 *   Run XOSC **as Administrator** when CPU temp/power stay at `--`. The Dashboard shows PawnIO status and an admin relaunch button.
 
 ### Linux
-Your system needs the following tools to handle hardware and music scraping:
+For music metadata and track position, install `playerctl` and use a player that exports MPRIS metadata. `xdotool` is an optional fallback for reading the focused window title when MPRIS metadata is unavailable. Hardware telemetry uses kernel-provided `/proc`, `/sys`, and `nvidia-smi` data where available.
 *   **Fedora:** `sudo dnf install playerctl xdotool lm_sensors`
 *   **Arch/Steam Deck:** `sudo pacman -S playerctl xdotool lm_sensors`
+
+XOSC follows the desktop session's existing X11/Wayland configuration rather than overriding display environment variables. Enable **Song Progress** from the Progress page to show the elapsed and total track time; the bar width and filled/empty characters are customizable there.
 
 ---
 
