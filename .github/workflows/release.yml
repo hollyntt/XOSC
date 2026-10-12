@@ -176,6 +176,7 @@ jobs:
           cp -r builds/build-win-x64/* XOSC/win-x64/ 2>/dev/null || true
           cp -r builds/build-linux-x64/* XOSC/linux-x64/ 2>/dev/null || true
           cp builds/appimage/XOSC-x86_64.AppImage XOSC/linux-x64/ 2>/dev/null || true
+          cp builds/appimage/XOSC-x86_64.AppImage ./XOSC-x86_64.AppImage
           
           cd XOSC && zip -r ../XOSC.zip .
         shell: bash
@@ -184,7 +185,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: XOSC
-          path: XOSC.zip
+          path: |
+            XOSC.zip
+            XOSC-x86_64.AppImage
 
   release:
     needs: [versioning, package]
@@ -200,7 +203,7 @@ jobs:
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: XOSC.zip
+          artifacts: "XOSC.zip,XOSC-x86_64.AppImage"
           tag: v${{ needs.versioning.outputs.version }}
           name: v${{ needs.versioning.outputs.version }}
           prerelease: false

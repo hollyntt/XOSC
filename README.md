@@ -32,7 +32,7 @@ XOSC follows the desktop session's existing X11/Wayland configuration rather tha
 
 ## 🚀 Installation
 
-1. Download the latest release for your platform from the [Releases Page](https://github.com/hollyntt/XOSC/releases/).
+1. Download the latest release for your platform from the [Releases Page](https://github.com/hollyntt/XOSC/releases/). Linux AppImage users can download `XOSC-x86_64.AppImage` directly, or use the AppImage included in `XOSC.zip`.
 2. **Windows:**
    1. Install [PawnIO](https://pawnio.eu/) if you want full CPU temp/power readings.
    2. Run `XOSC.exe` (preferably as Administrator for hardware sensors).

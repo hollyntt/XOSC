@@ -67,69 +67,96 @@ public static class Updater
 
             bool isAppImage = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("APPIMAGE"));
 
-            var asset = doc.RootElement
+            var assets = doc.RootElement
                 .GetProperty("assets")
                 .EnumerateArray()
-                .FirstOrDefault(a =>
-                {
-                    string name = a.GetProperty("name").GetString() ?? "";
-                    if (isAppImage) return name == "XOSC-x86_64.AppImage";
-                    return name == "XOSC.zip";
-                });
+                .ToArray();
+            var asset = assets.FirstOrDefault(a =>
+            {
+                string name = a.GetProperty("name").GetString() ?? "";
+                return name == (isAppImage ? "XOSC-x86_64.AppImage" : "XOSC.zip");
+            });
 
             if (asset.ValueKind == JsonValueKind.Undefined)
             {
-                Status = isAppImage ? "AppImage not found in release" : "XOSC.zip not found";
-                return;
-            }
-
-            string dUrl = asset.GetProperty("browser_download_url").GetString() ?? "";
-
-            if (isAppImage)
-            {
-                var bytes = await http.GetByteArrayAsync(dUrl);
-                _pData = bytes;
-            }
-            else
-            {
-                var z = await http.GetByteArrayAsync(dUrl);
-
-                using var ms = new MemoryStream(z);
-                using var arch = new ZipArchive(ms);
-
-                string platformFolder = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                    ? "win-x64/"
-                    : "linux-x64/";
-
-                var entries = arch.Entries
-                    .Where(e => e.FullName.StartsWith(platformFolder, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                string[] names = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                    ? new[] { "XOSC.exe" }
-                    : new[] { "XOSC" };
-
-                ZipArchiveEntry? entry = null;
-
-                foreach (var name in names)
+                if (!isAppImage)
                 {
-                    entry = entries.FirstOrDefault(e =>
-                        Path.GetFileName(e.FullName).Equals(name, StringComparison.OrdinalIgnoreCase));
-
-                    if (entry != null)
-                        break;
-                }
-
-                if (entry == null)
-                {
-                    Status = "No executable found in update package";
+                    Status = "XOSC.zip not found in release";
                     return;
                 }
 
-                using var es = entry.Open();
-                using var msw = new MemoryStream();
-                await es.CopyToAsync(msw);
-                _pData = msw.ToArray();
+                var zipAsset = assets.FirstOrDefault(a =>
+                    a.GetProperty("name").GetString() == "XOSC.zip");
+                if (zipAsset.ValueKind == JsonValueKind.Undefined)
+                {
+                    Status = "AppImage and XOSC.zip not found in release";
+                    return;
+                }
+
+                string zipUrl = zipAsset.GetProperty("browser_download_url").GetString() ?? "";
+                byte[] archiveBytes = await http.GetByteArrayAsync(zipUrl);
+                using var archiveStream = new MemoryStream(archiveBytes);
+                using var archive = new ZipArchive(archiveStream);
+                var appImageEntry = archive.GetEntry("linux-x64/XOSC-x86_64.AppImage");
+                if (appImageEntry == null)
+                {
+                    Status = "AppImage not found in release or XOSC.zip";
+                    return;
+                }
+
+                using var appImageStream = appImageEntry.Open();
+                using var appImageData = new MemoryStream();
+                await appImageStream.CopyToAsync(appImageData);
+                _pData = appImageData.ToArray();
+            }
+            else
+            {
+                string downloadUrl = asset.GetProperty("browser_download_url").GetString() ?? "";
+
+                if (isAppImage)
+                {
+                    _pData = await http.GetByteArrayAsync(downloadUrl);
+                }
+                else
+                {
+                    var zipBytes = await http.GetByteArrayAsync(downloadUrl);
+                    using var archiveStream = new MemoryStream(zipBytes);
+                    using var arch = new ZipArchive(archiveStream);
+
+                    string platformFolder = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                        ? "win-x64/"
+                        : "linux-x64/";
+
+                    var entries = arch.Entries
+                        .Where(e => e.FullName.StartsWith(platformFolder, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    string[] names = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                        ? new[] { "XOSC.exe" }
+                        : new[] { "XOSC" };
+
+                    ZipArchiveEntry? entry = null;
+
+                    foreach (var name in names)
+                    {
+                        entry = entries.FirstOrDefault(e =>
+                            Path.GetFileName(e.FullName).Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                        if (entry != null)
+                            break;
+                    }
+
+                    if (entry == null)
+                    {
+                        Status = "No executable found in update package";
+                        return;
+                    }
+
+                    using var entryStream = entry.Open();
+                    using var executableData = new MemoryStream();
+                    await entryStream.CopyToAsync(executableData);
+                    _pData = executableData.ToArray();
+                }
             }
 
             Status = $"Update found! (v{latestVersion})";
