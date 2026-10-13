@@ -88,7 +88,7 @@ public static class MusicChatEngine
     private static async Task Update()
     {
         var cfg = Program.Config;
-        if (DateTime.Now < _manualE) { EngineState = "Manual"; string manualMessage = $"💬 {_manualM}"; Volatile.Write(ref _lastChatboxMessage, manualMessage); bool notificationSound = Interlocked.Exchange(ref _manualSoundPending, 0) == 1; OscEngine.SendChatboxInput(manualMessage, notificationSound); return; }
+        if (DateTime.Now < _manualE) { EngineState = "Manual"; string manualMessage = ApplyThinMode($"💬 {_manualM}"); Volatile.Write(ref _lastChatboxMessage, manualMessage); bool notificationSound = Interlocked.Exchange(ref _manualSoundPending, 0) == 1; OscEngine.SendChatboxInput(manualMessage, notificationSound); return; }
         if ((DateTime.Now - _lastR).TotalSeconds >= cfg.Interval) { _musicData = _platformEngine.GetMusicData(); if (cfg.WeatherMode) { var c = await GetCoordinatesAsync(); await FetchWeatherAsync(c.lat, c.lon); } if (cfg.NetMode) await NetworkStats.UpdateAsync(); _lastR = DateTime.Now; }
         if (cfg.AfkDetectionMode) AfkEngine.Update();
         if ((DateTime.Now - _lastS).TotalSeconds < Math.Max(cfg.Interval, 1.5)) return;
@@ -143,8 +143,19 @@ public static class MusicChatEngine
             foreach (var m in mem) p2.Add(m);
         }
         List<string> active; if (p1.Count > 0 && p2.Count > 0) { _showHardwareTick = !_showHardwareTick; active = _showHardwareTick ? p2 : p1; } else if (p2.Count > 0) { _showHardwareTick = true; active = p2; } else { _showHardwareTick = false; active = p1; }
-        string outStr = string.Join("\n", active); if (cfg.ThinMode) { if (outStr.Length > 138) outStr = outStr[..138]; outStr += "\u0003\u001f"; } Volatile.Write(ref _lastChatboxMessage, outStr); OscEngine.SendChatboxInput(outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = "Chatting";
+        string outStr = ApplyThinMode(string.Join("\n", active)); Volatile.Write(ref _lastChatboxMessage, outStr); OscEngine.SendChatboxInput(outStr); _lastS = DateTime.Now; PacketsSent++; EngineState = "Chatting";
         if (!_showHardwareTick && statusAdded && cfg.AutoCycleStatus) lock (ListLock) _statusIdx = (_statusIdx + 1) % cfg.StatusList.Count;
+    }
+
+    private static string ApplyThinMode(string message)
+    {
+        if (!Program.Config.ThinMode || RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return message;
+
+        if (message.Length > 138)
+            message = message[..138];
+
+        return message + "\u0003\u001f";
     }
 
     public static void NotifyOS(string txt) { string s = txt.Replace("'", "").Replace("\"", "").Replace("\n", " "); if (s.Length > 200) s = s[..200] + "..."; try { if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) { string ps = "Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Warning; $n.Visible = $true; $n.ShowBalloonTip(8000, 'XOSC Alert', '" + s + "', [System.Windows.Forms.ToolTipIcon]::Warning); Start-Sleep -Seconds 9; $n.Visible = $false"; Process.Start(new ProcessStartInfo("powershell", "-NoProfile -WindowStyle Hidden -Command \"" + ps + "\"") { CreateNoWindow = true, UseShellExecute = false }); } else Process.Start(new ProcessStartInfo("notify-send", "--urgency=critical \"XOSC Alert\" \"" + s + "\"") { UseShellExecute = false, CreateNoWindow = true }); } catch { } }
