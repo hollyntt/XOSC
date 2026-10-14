@@ -16,7 +16,6 @@ public class AppConfig
         public string Pronouns = "They/Them";
         public string CustomPronouns = "";
         public string StatusIcon = "⭐";
-        public bool ThinMode = false;
         public bool PcMode = false;
         public bool ShowRam = false;
         public bool ShowVram = false;

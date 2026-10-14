@@ -240,8 +240,6 @@ namespace XOSC
                     Toggle("Time", ref Config.TimeMode);
                     Toggle("Military Time", ref Config.MilitaryTime);
                     Toggle("Distro", ref Config.DistroMode);
-                    if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                        Toggle("Thin Mode", ref Config.ThinMode);
                     Toggle("Auto-Cycle", ref Config.AutoCycleStatus);
                     Toggle("Stylize All Text", ref Config.StylizeTextMode);
                     DrawCombo("Pronouns", _pronounsList, ref Config.Pronouns, ref Config.CustomPronouns);
