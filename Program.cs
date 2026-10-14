@@ -221,7 +221,13 @@ namespace XOSC
                     if (ImGui.Button("Restart as Administrator")) RelaunchAsAdmin();
                 }
 #endif
-                ImGui.Dummy(new Vector2(0, 6)); if (ImGui.InputText("Manual Message", ref _chatIn, 128)) MusicChatEngine.NotifyManualTyping(); if (ImGui.Button("Send Manual")) { MusicChatEngine.SetManual(_chatIn); _chatIn = ""; } ImGui.Dummy(new Vector2(0, 10)); if (ImGui.InputText("OSC IP", ref Config.OscIP, 64)) SaveConfig(); if (ImGui.InputInt("OSC Port", ref Config.OscPort)) SaveConfig(); }); break; 
+                ImGui.Dummy(new Vector2(0, 6));
+                string previousChatIn = _chatIn;
+                bool sendManual = ImGui.InputText("Manual Message", ref _chatIn, 128, ImGuiInputTextFlags.EnterReturnsTrue);
+                if (_chatIn != previousChatIn) MusicChatEngine.NotifyManualTyping();
+                if (ImGui.Button("Send Manual")) sendManual = true;
+                if (sendManual) { MusicChatEngine.SetManual(_chatIn); _chatIn = ""; }
+                ImGui.Dummy(new Vector2(0, 10)); if (ImGui.InputText("OSC IP", ref Config.OscIP, 64)) SaveConfig(); if (ImGui.InputInt("OSC Port", ref Config.OscPort)) SaveConfig(); }); break;
             case 1: Card("Statuses", () => { lock (MusicChatEngine.ListLock) { for (int i = 0; i < Config.StatusList.Count; i++) { ImGui.PushID(i); var item = Config.StatusList[i]; bool isSelected = _selectedIndices.Contains(i); if (ImGui.Checkbox("##select", ref isSelected)) { if (isSelected) _selectedIndices.Add(i); else _selectedIndices.Remove(i); } ImGui.SameLine(); if (ImGui.Button(item.IsFavorited ? "[*]" : "[ ]", new Vector2(32, 24))) { item.IsFavorited = !item.IsFavorited; Config.StatusList = Config.StatusList.OrderByDescending(s => s.IsFavorited).ToList(); SaveConfig(); ImGui.PopID(); break; } ImGui.SameLine(); if (ImGui.Button("Up", new Vector2(32, 24)) && i > 0) { (Config.StatusList[i], Config.StatusList[i - 1]) = (Config.StatusList[i - 1], Config.StatusList[i]); SaveConfig(); } ImGui.SameLine(); if (ImGui.Button("Dn", new Vector2(32, 24)) && i < Config.StatusList.Count - 1) { (Config.StatusList[i], Config.StatusList[i + 1]) = (Config.StatusList[i + 1], Config.StatusList[i]); SaveConfig(); } ImGui.SameLine(); string statusText = item.Text; if (ImGui.InputText("##s", ref statusText, 100)) { item.Text = statusText; SaveConfig(); } ImGui.PopID(); } } ImGui.Dummy(new Vector2(0, 10)); if (ImGui.Button("+ Add New Status")) Config.StatusList.Add(new StatusItem()); ImGui.SameLine(); if (_selectedIndices.Any() && ImGui.Button("Remove Selected")) { var sorted = _selectedIndices.ToList(); sorted.Sort(); for (int i = sorted.Count - 1; i >= 0; i--) Config.StatusList.RemoveAt(sorted[i]); _selectedIndices.Clear(); SaveConfig(); } }); break; 
             case 2:
                 Card("Chatbox", () =>
